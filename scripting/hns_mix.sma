@@ -1,22 +1,19 @@
 #include <amxmodx>
 #include <cstrike>
 #include <fakemeta>
-#include <chatcolor>
 #include <hns_common>
-#include <dhudmessage>
+#include <hns_teamjoin>
 
-#pragma semicolon			1
+#pragma semicolon				1
 
-#define PLUGIN_NAME			"HNS_Mix"
+#define PLUGIN_NAME				"HNS_Mix"
 #define PLUGIN_VERSION			"1.0.0"
 #define PLUGIN_AUTHOR			"Reavap"
 
 #define PLUGIN_ACCESS_LEVEL		ADMIN_LEVEL_A
 
-#define MAX_PLAYERS			32
-
 #define TASK_COUNTDOWN			4000
-#define TASK_TRANSFER_PLAYER		5000
+#define TASK_TRANSFER_PLAYER	5000
 
 #define playerCanAdministrateMix(%1) ((get_user_flags(%1) & PLUGIN_ACCESS_LEVEL) > 0 || g_bTemporaryAdmin[%1])
 
@@ -41,7 +38,6 @@ new g_iMixRoundCompletedForward;
 new bool:g_bStateChanged;
 
 new Trie:g_tReplaceCooldowns;
-new Trie:g_tBlockedTeamSelectMenus;
 
 new Float:g_flRoundTime;
 new Float:g_flRoundStart;
@@ -87,28 +83,10 @@ new const g_sTeamNames[][] =
 	"Spectator"
 };
 
-const g_iVGuiMenuTeamSelect = 2;
-const g_iVGuiMenuClassSelectT = 26;
-const g_iVGuiMenuClassSelectCT = 27;
-
-const EXTRAOFFSET_PLAYER = 5;
-const m_bHasChangeTeamThisRound = 125;
-const m_iNumRespawns = 365;
-
-new const g_sTeamSelectMenus[][] =
-{
-	"#Team_Select",
-	"#Team_Select_Spect",
-	"#IG_Team_Select",
-	"#IG_Team_Select_Spect"
-};
-
 new const g_sPluginPrefix[] = "^1[^4HNS^1]";
 new const g_sNotPlayingMenuItem[] = " [NOT PLAYING]";
 
-new const g_sJoinTeamCmd[] = "jointeam";
-new const g_sJoinClassCmd[] = "joinclass";
-
+// Not currently in use
 new const g_bEarlyExitSetting = false;
 
 public plugin_init()
@@ -122,12 +100,6 @@ public plugin_init()
 	register_logevent("eventHostage", 6, "3=Hostages_Not_Rescued");
 	register_logevent("eventTwin", 6, "3=Terrorists_Win");
 	register_logevent("eventCTwin", 6, "3=CTs_Win");
-	
-	register_message(get_user_msgid("ShowMenu"), "message_ShowMenu");
-	register_message(get_user_msgid("VGUIMenu"), "message_VGUIMenu");
-	register_clcmd("chooseteam", "cmdBlockJoinTeam");
-	register_clcmd(g_sJoinTeamCmd, "cmdBlockJoinTeam");
-	register_clcmd(g_sJoinClassCmd, "cmdBlockJoinTeam");
 	
 	register_clcmd("hnsmenu","cmdHnsMenu");
 	register_clcmd("say /hnsmenu","cmdHnsMenu");
@@ -150,19 +122,13 @@ public plugin_init()
 	register_clcmd("say /startingteam", "cmdStartingTeam");
 	
 	g_tReplaceCooldowns = TrieCreate();
-	g_tBlockedTeamSelectMenus = TrieCreate();
-	
-	for (new i = 0; i < sizeof g_sTeamSelectMenus; i++)
-	{
-		TrieSetCell(g_tBlockedTeamSelectMenus, g_sTeamSelectMenus[i], 1);
-	}
-	
+
 	initializeEventForwards();
 }
 
 initializeEventForwards()
 {
-	new pluginId = find_plugin_byfile("HNS_MixStats.amxx");
+	new pluginId = find_plugin_byfile("hns_mixstats.amxx");
 	
 	if (pluginId >= 0)
 	{
@@ -221,17 +187,17 @@ public client_authorized(id)
 	}
 }
 
-public client_disconnect(id)
+public client_disconnected(id)
 {
 	if (id == g_iCaptainT)
 	{
-		client_print_color(0, RED, "%s Captain for team ^3T ^1disconnected!", g_sPluginPrefix);
+		client_print_color(0, print_team_red, "%s Captain for team ^3T ^1disconnected!", g_sPluginPrefix);
 		g_iCaptainT = 0;
 	}
 	
 	if (id == g_iCaptainCT)
 	{
-		client_print_color(0, BLUE, "%s Captain for team ^3CT ^1disconnected!", g_sPluginPrefix);
+		client_print_color(0, print_team_blue, "%s Captain for team ^3CT ^1disconnected!", g_sPluginPrefix);
 		g_iCaptainCT = 0;
 	}
 	
@@ -427,7 +393,7 @@ mixCompleted()
 	
 	if (g_flSurvivedTimeTeamT == g_flSurvivedTimeTeamCT)
 	{
-		client_print_color(0, GREY, "%s Mix finished with a draw!", g_sPluginPrefix);
+		client_print_color(0, print_team_grey, "%s Mix finished with a draw!", g_sPluginPrefix);
 	}
 	else
 	{
@@ -437,8 +403,8 @@ mixCompleted()
 		new szMessageT[64], szMessageCT[64], szMessageSpec[64];
 		
 		formatex(szMessageT, charsmax(szMessageT), "%s %s!", g_sPluginPrefix, iWinnerCurrentTeam == CS_TEAM_T ? "^4YOU WON": "^3YOU LOST");
-		formatex(szMessageCT, charsmax(szMessageCT), "%s %s!", g_sPluginPrefix, iWinnerCurrentTeam == CS_TEAM_CT  ? "^4YOU WON": "^3YOU LOST");
-		formatex(szMessageSpec, charsmax(szMessageSpec), "%s Team starting as ^3%s ^1won", g_sPluginPrefix, iWinnerStartingTeam == CS_TEAM_T  ? "T" : "CT");
+		formatex(szMessageCT, charsmax(szMessageCT), "%s %s!", g_sPluginPrefix, iWinnerCurrentTeam == CS_TEAM_CT ? "^4YOU WON": "^3YOU LOST");
+		formatex(szMessageSpec, charsmax(szMessageSpec), "%s Team starting as ^3%s ^1won", g_sPluginPrefix, iWinnerStartingTeam == CS_TEAM_T ? "T" : "CT");
 		
 		static aPlayers[MAX_PLAYERS], iPlayerCount;
 		get_players(aPlayers, iPlayerCount, "ch");
@@ -450,11 +416,11 @@ mixCompleted()
 			{
 				case CS_TEAM_T:
 				{
-					client_print_color(playerId, RED, szMessageT);
+					client_print_color(playerId, print_team_red, szMessageT);
 				}
 				case CS_TEAM_CT:
 				{
-					client_print_color(playerId, BLUE, szMessageCT);
+					client_print_color(playerId, print_team_blue, szMessageCT);
 				}
 				default:
 				{
@@ -486,167 +452,14 @@ CsTeams:reverseWinningTeam(const CsTeams:iTeam)
 }
 
 // ===============================================
-// Team joining and player transfer
+// Player transfer
 // ===============================================
-
-public message_ShowMenu(const iMsgid, const iDest, const id)
-{
-	static szMenuCode[32];
-	get_msg_arg_string(4, szMenuCode, charsmax(szMenuCode));
-	
-	if (mixIsActive() && TrieKeyExists(g_tBlockedTeamSelectMenus, szMenuCode))
-	{
-		delayedPlayerTransfer(id, CS_TEAM_SPECTATOR, iMsgid);
-		return PLUGIN_HANDLED;
-	}
-	
-	return PLUGIN_CONTINUE;
-}
-
-public message_VGUIMenu(const iMsgid, const iDest, const id)
-{
-	new iMenuType = get_msg_arg_int(1);
-	
-	if (mixIsActive())
-	{
-		if (iMenuType == g_iVGuiMenuTeamSelect)
-		{
-			delayedPlayerTransfer(id, CS_TEAM_SPECTATOR, 0);
-			return PLUGIN_HANDLED;
-		}
-		
-		if (iMenuType == g_iVGuiMenuClassSelectT || iMenuType == g_iVGuiMenuClassSelectCT)
-		{
-			return PLUGIN_HANDLED;
-		}
-	}
-	
-	return PLUGIN_CONTINUE;
-}
-
-public cmdBlockJoinTeam(const id)
-{
-	if (mixIsActive())
-	{
-		if (cs_get_user_team(id) == CS_TEAM_UNASSIGNED)
-		{
-			instantPlayerTransfer(id, CS_TEAM_SPECTATOR, 0);
-		}
-		
-		return PLUGIN_HANDLED;
-	}
-	
-	return PLUGIN_CONTINUE;
-}
-
-delayedPlayerTransfer(const id, const CsTeams:iTeam, const iMenuMsgId)
-{
-	if (!is_user_connected(id))
-	{
-		return;
-	}
-	
-	new taskId = TASK_TRANSFER_PLAYER + id;
-	remove_task(taskId);
-	
-	new Float:flTime = ((id % 4) + 1) / 10.0;
-	
-	new task_params[3];
-	task_params[0] = id;
-	task_params[1] = _:iTeam;
-	task_params[2] = iMenuMsgId;
-	
-	set_task(flTime, "taskTransferPlayer", taskId, task_params, sizeof(task_params));
-}
-
-public taskTransferPlayer(const iParams[])
-{
-	new id = iParams[0];
-	new CsTeams:iNewTeam = CsTeams:iParams[1];
-	new iMenuMsgId = iParams[2];
-	
-	instantPlayerTransfer(id, iNewTeam, iMenuMsgId);
-}
-
-instantPlayerTransfer(const id, const CsTeams:iNewTeam, const iMenuMsgId)
-{
-	if (is_user_connected(id))
-	{
-		if (is_user_alive(id))
-		{
-			user_kill(id, 1);
-		}
-		
-		new CsTeams:iCurrentTeam = cs_get_user_team(id);
-		
-		if (iCurrentTeam != iNewTeam)
-		{
-			resetHasChangedTeamThisRound(id);
-			
-			if (iMenuMsgId)
-			{
-				set_msg_block(iMenuMsgId, BLOCK_SET);
-			}
-			
-			if (iCurrentTeam == CS_TEAM_UNASSIGNED && iNewTeam == CS_TEAM_SPECTATOR)
-			{
-				set_pdata_int(id, m_iNumRespawns, 1, EXTRAOFFSET_PLAYER);
-				
-				engclient_cmd(id, g_sJoinTeamCmd, "5");
-				engclient_cmd(id, g_sJoinClassCmd, "5");
-			}
-			
-			switch (iNewTeam)
-			{
-				case CS_TEAM_SPECTATOR:
-				{
-					cs_set_user_team(id, CS_TEAM_SPECTATOR);
-				}
-				case CS_TEAM_T:
-				{
-					engclient_cmd(id, g_sJoinTeamCmd, "1");
-					engclient_cmd(id, g_sJoinClassCmd, "5");
-				}
-				case CS_TEAM_CT:
-				{
-					engclient_cmd(id, g_sJoinTeamCmd, "2");
-					engclient_cmd(id, g_sJoinClassCmd, "5");
-				}
-			}
-			
-			if (iMenuMsgId)
-			{
-				set_msg_block(iMenuMsgId, BLOCK_NOT);
-			}
-			
-			resetHasChangedTeamThisRound(id);
-		}
-	}
-}
-
-resetHasChangedTeamThisRound(const id)
-{
-	set_pdata_int(id, m_bHasChangeTeamThisRound, get_pdata_int(id, m_bHasChangeTeamThisRound, EXTRAOFFSET_PLAYER) &~ (1 << 8), EXTRAOFFSET_PLAYER);
-}
-
-transferPlayersToSpectator()
-{
-	new aPlayers[32], iPlayerCount, i, playerId;
-	get_players(aPlayers, iPlayerCount, "ch");
-	
-	for (; i < iPlayerCount; i++)
-	{
-		playerId = aPlayers[i];
-		
-		delayedPlayerTransfer(playerId, CS_TEAM_SPECTATOR, 0);
-	}
-}
 
 displayTransferPlayerMenu(const id, const CsTeams:iNewTeam)
 {
 	if (!canTransferPlayers(id))
 	{
-		client_print_color(id, RED, "%s ^3Transfer menu is not available in the current state", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Transfer menu is not available in the current state", g_sPluginPrefix);
 		return;
 	}
 	
@@ -728,7 +541,7 @@ public transferPlayerMenuHandler(const id, const hMenu, const item)
 		new szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
 		
-		instantPlayerTransfer(selectedPlayerId, iNewTeam, 0);
+		hns_transferPlayer(selectedPlayerId, iNewTeam);
 		client_print_color(0, getTeamColor(iNewTeam), "%s ^3%s ^1was transfered to ^3%s", g_sPluginPrefix, szName, g_sTeamNames[_:iNewTeam]);
 	}
 	else if (selectedCharacter)
@@ -737,7 +550,7 @@ public transferPlayerMenuHandler(const id, const hMenu, const item)
 	}
 	else
 	{
-		client_print_color(id, RED, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
 	}
 	
 	displayTransferPlayerMenu(id, iNewTeam);
@@ -764,7 +577,7 @@ CsTeams:getNextTransferMenuTeam(const CsTeams:iCurrentTeam)
 
 getTeamColor(const CsTeams:iTeam)
 {
-	return iTeam == CS_TEAM_T ? RED : (iTeam == CS_TEAM_CT ? BLUE : GREY);
+	return iTeam == CS_TEAM_T ? print_team_red : (iTeam == CS_TEAM_CT ? print_team_blue : print_team_grey);
 }
 
 // ===============================================
@@ -817,7 +630,7 @@ public cmdPickPlayer(const id)
 	}
 	else
 	{
-		client_print_color(id, RED, "%s ^3It's currently not your turn to pick a player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3It's currently not your turn to pick a player", g_sPluginPrefix);
 	}
 	
 	return PLUGIN_HANDLED;
@@ -832,14 +645,14 @@ public cmdNoPlay(const id)
 	
 	if (cs_get_user_team(id) != CS_TEAM_SPECTATOR)
 	{
-		client_print_color(id, RED, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
 	}
 	else if (!g_bNoPlay[id])
 	{
 		new szName[32];
 		get_user_name(id, szName, charsmax(szName));
 		
-		client_print_color(id, GREY, "%s ^3%s ^1is not available for playing", g_sPluginPrefix, szName);
+		client_print_color(id, print_team_grey, "%s ^3%s ^1is not available for playing", g_sPluginPrefix, szName);
 		g_bNoPlay[id] = true;
 	}
 	
@@ -855,14 +668,14 @@ public cmdPlay(const id)
 	
 	if (cs_get_user_team(id) != CS_TEAM_SPECTATOR)
 	{
-		client_print_color(id, RED, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
 	}
 	else if (g_bNoPlay[id])
 	{
 		new szName[32];
 		get_user_name(id, szName, charsmax(szName));
 		
-		client_print_color(0, GREY, "%s ^3%s ^1is available for playing", g_sPluginPrefix, szName);
+		client_print_color(0, print_team_grey, "%s ^3%s ^1is available for playing", g_sPluginPrefix, szName);
 		g_bNoPlay[id] = false;
 	}
 	
@@ -880,15 +693,15 @@ public cmdReplace(const id)
 	
 	if (cs_get_user_team(id) == CS_TEAM_SPECTATOR)
 	{
-		client_print_color(id, RED, "%s ^3You can not execute this command as a spectator", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3You can not execute this command as a spectator", g_sPluginPrefix);
 	}
 	else if (!canExecuteReplace(id))
 	{
-		client_print_color(id, RED, "%s ^3You must be dead or the game must be paused in order to replace", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3You must be dead or the game must be paused in order to replace", g_sPluginPrefix);
 	}
 	else if (g_flReplaceCooldown[id] && g_flReplaceCooldown[id] > flGameTime)
 	{
-		client_print_color(id, RED, "%s ^3You currently have a cooldown on this command. Time left: ^1%s", g_sPluginPrefix, getTimeAsText(g_flReplaceCooldown[id] - flGameTime));
+		client_print_color(id, print_team_red, "%s ^3You currently have a cooldown on this command. Time left: ^1%s", g_sPluginPrefix, getTimeAsText(g_flReplaceCooldown[id] - flGameTime));
 	}
 	else
 	{
@@ -923,15 +736,15 @@ public cmdStartingTeam(const id)
 	{
 		case CS_TEAM_T:
 		{
-			client_print_color(id, bEvenRound ? BLUE : RED, "%s ^1Your team started out as ^3%s", g_sPluginPrefix, bEvenRound ? "CT" : "T");
+			client_print_color(id, bEvenRound ? print_team_blue : print_team_red, "%s ^1Your team started out as ^3%s", g_sPluginPrefix, bEvenRound ? "CT" : "T");
 		}
 		case CS_TEAM_CT:
 		{
-			client_print_color(id, bEvenRound ? RED : BLUE, "%s ^1Your team started out as %s", g_sPluginPrefix, bEvenRound ? "T" : "CT");
+			client_print_color(id, bEvenRound ? print_team_red : print_team_blue, "%s ^1Your team started out as %s", g_sPluginPrefix, bEvenRound ? "T" : "CT");
 		}
 		default:
 		{
-			client_print_color(id, GREY, "%s ^1The current ^3%s team started out as ^3T", g_sPluginPrefix, bEvenRound ? "CT" : "T");
+			client_print_color(id, print_team_grey, "%s ^1The current ^3%s team started out as ^3T", g_sPluginPrefix, bEvenRound ? "CT" : "T");
 		}
 	}
 	
@@ -1035,14 +848,14 @@ public menuHandler(const id, const hMenu, const item)
 		{
 			if (g_eMixState != MIX_INACTIVE)
 			{
-				client_print_color(id, RED, "%s ^3There is already a mix in progress", g_sPluginPrefix);
+				client_print_color(id, print_team_red, "%s ^3There is already a mix in progress", g_sPluginPrefix);
 			}
 			else
 			{
 				changeState(PAUSED_MODE);
-				client_print_color(0, RED, "%s ^3%s ^1started a new mix", g_sPluginPrefix, szAdminName);
+				client_print_color(0, print_team_red, "%s ^3%s ^1started a new mix", g_sPluginPrefix, szAdminName);
 				
-				transferPlayersToSpectator();
+				hns_transferAllPlayersToSpectator();
 				
 				g_iMixStartedBy = id;
 				getNextInitalizationMenu(id);
@@ -1056,7 +869,7 @@ public menuHandler(const id, const hMenu, const item)
 			changeState(PUBLIC_MODE);
 			serverRestart();
 			
-			client_print_color(0, RED, "%s ^3%s ^1terminated the mix", g_sPluginPrefix, szAdminName);
+			client_print_color(0, print_team_red, "%s ^3%s ^1terminated the mix", g_sPluginPrefix, szAdminName);
 		}
 		case 3:
 		{
@@ -1072,7 +885,7 @@ public menuHandler(const id, const hMenu, const item)
 				
 				serverRestartRound();
 				
-				client_print_color(0, RED, "%s ^3%s ^1resumed the mix", g_sPluginPrefix, szAdminName);
+				client_print_color(0, print_team_red, "%s ^3%s ^1resumed the mix", g_sPluginPrefix, szAdminName);
 				set_task(1.0, "taskLiveMessage");
 			}
 		}
@@ -1084,7 +897,7 @@ public menuHandler(const id, const hMenu, const item)
 				g_eMixState = MIX_PAUSED;
 				changeState(PAUSED_MODE);
 				
-				client_print_color(0, RED, "%s ^3%s ^1paused the mix", g_sPluginPrefix, szAdminName);
+				client_print_color(0, print_team_red, "%s ^3%s ^1paused the mix", g_sPluginPrefix, szAdminName);
 				
 				set_dhudmessage(40, 163, 42, -1.0, 0.60, 0, 3.0, 5.5, 0.1, 1.0);
 				show_dhudmessage(0, "PAUSING");
@@ -1092,7 +905,7 @@ public menuHandler(const id, const hMenu, const item)
 		}
 		case 6:
 		{
-			client_print_color(0, RED, "%s ^3%s ^1restarted the round", g_sPluginPrefix, szAdminName);
+			client_print_color(0, print_team_red, "%s ^3%s ^1restarted the round", g_sPluginPrefix, szAdminName);
 			serverRestartRound();
 		}
 		case 7:
@@ -1152,7 +965,7 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 	
 	if (!selectedPlayerId)
 	{
-		client_print_color(id, RED, "%s ^3Failed to perform the action on the selected player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Failed to perform the action on the selected player", g_sPluginPrefix);
 	}
 	else
 	{
@@ -1165,11 +978,11 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 		
 		if (g_bTemporaryAdmin[selectedPlayerId])
 		{
-			client_print_color(0, GREY, "%s ^3%s ^1granted ^3%s ^1mix administration rights", g_sPluginPrefix, szAdminName, szPlayerName);
+			client_print_color(0, print_team_grey, "%s ^3%s ^1granted ^3%s ^1mix administration rights", g_sPluginPrefix, szAdminName, szPlayerName);
 		}
 		else
 		{
-			client_print_color(0, GREY, "%s ^3%s ^1revoked mix administration rights for ^3%s", g_sPluginPrefix, szAdminName, szPlayerName);
+			client_print_color(0, print_team_grey, "%s ^3%s ^1revoked mix administration rights for ^3%s", g_sPluginPrefix, szAdminName, szPlayerName);
 		}
 	}
 	
@@ -1183,7 +996,7 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 resetMixInitialization()
 {
 	g_eMixState = MIX_INACTIVE;
-	g_iMixStartedBy = 0; 
+	g_iMixStartedBy = 0;
 	
 	g_iPlayerCount = 0;
 	g_iCaptainT = 0;
@@ -1293,7 +1106,7 @@ public roundsMenuHandler(const id, const hMenu, const item)
 		
 		new iMinutes = floatround(iRounds * 1.8, floatround_ceil);
 		
-		client_print_color(0, GREY, "%s Rounds: ^3%d ^1- %d min. ^4Please don't leave! GL&HF!", g_sPluginPrefix, iRounds, iMinutes);
+		client_print_color(0, print_team_grey, "%s Rounds: ^3%d ^1- %d min. ^4Please don't leave! GL&HF!", g_sPluginPrefix, iRounds, iMinutes);
 		
 		getNextInitalizationMenu(id);
 	}
@@ -1334,7 +1147,7 @@ public roundTimeMenuHandler(const id, const hMenu, const item)
 	if (flRoundTime > 0)
 	{
 		set_pcvar_float(mp_roundtime, flRoundTime);
-		client_print_color(0, GREY, "%s Roundtime: ^3%.2f", g_sPluginPrefix, flRoundTime);
+		client_print_color(0, print_team_grey, "%s Roundtime: ^3%.2f", g_sPluginPrefix, flRoundTime);
 		
 		getNextInitalizationMenu(id);
 	}
@@ -1373,7 +1186,7 @@ public playerCountMenuHandler(const id, const hMenu, const item)
 	if (iPlayerCount > 0)
 	{
 		g_iPlayerCount = iPlayerCount;
-		client_print_color(0, GREY, "%s ^3%d vs %d", g_sPluginPrefix, iPlayerCount, iPlayerCount);
+		client_print_color(0, print_team_grey, "%s ^3%d vs %d", g_sPluginPrefix, iPlayerCount, iPlayerCount);
 		
 		getNextInitalizationMenu(id);
 	}
@@ -1433,7 +1246,7 @@ public captainMenuHandler(const id, const hMenu, const item)
 		static szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
 		
-		instantPlayerTransfer(selectedPlayerId, iNewTeam, 0);
+		hns_transferPlayer(selectedPlayerId, iNewTeam);
 		client_print_color(0, getTeamColor(iNewTeam), "%s ^3%s ^1was selected as a ^3captain", g_sPluginPrefix, szName);
 		
 		if (iNewTeam == CS_TEAM_T)
@@ -1451,7 +1264,7 @@ public captainMenuHandler(const id, const hMenu, const item)
 	}
 	else
 	{
-		client_print_color(id, RED, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
 	}
 	
 	displayCaptainMenu(id);
@@ -1507,7 +1320,7 @@ public pickPlayerMenuHandler(const id, const hMenu, const item)
 	}
 	else if (selectedPlayerId && isValidTeamTransfer(cs_get_user_team(selectedPlayerId), iNewTeam))
 	{
-		instantPlayerTransfer(selectedPlayerId, iNewTeam, 0);
+		hns_transferPlayer(selectedPlayerId, iNewTeam);
 		
 		static szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
@@ -1519,7 +1332,7 @@ public pickPlayerMenuHandler(const id, const hMenu, const item)
 	}
 	else
 	{
-		client_print_color(id, RED, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Failed to transfer the selected player", g_sPluginPrefix);
 	}
 	
 	displayPickPlayerMenu(id);
@@ -1589,7 +1402,7 @@ public replaceMenuHandler(const id, const hMenu, const item)
 	{
 		static szName[32];
 		get_user_name(id, szName, charsmax(szName));
-		client_print_color(id, GREY, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
+		client_print_color(id, print_team_grey, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
 		
 		return PLUGIN_HANDLED;
 	}
@@ -1601,14 +1414,14 @@ public replaceMenuHandler(const id, const hMenu, const item)
 	{
 		static szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
-		client_print_color(id, GREY, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
+		client_print_color(id, print_team_grey, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
 		
 		displayReplaceRequestMenu(selectedPlayerId, id);
 		return PLUGIN_HANDLED;
 	}
 	else
 	{
-		client_print_color(id, RED, "%s ^3Can not replace with the selected player", g_sPluginPrefix);
+		client_print_color(id, print_team_red, "%s ^3Can not replace with the selected player", g_sPluginPrefix);
 	}
 	
 	displayReplaceMenu(id);
@@ -1665,7 +1478,7 @@ public replaceRequestMenuHandler(const id, const hMenu, const item)
 	{
 		static szName[32];
 		get_user_name(id, szName, charsmax(szName));
-		client_print_color(selectedPlayerId, RED, "%s ^3%s rejected your replace request", g_sPluginPrefix, szName);
+		client_print_color(selectedPlayerId, print_team_red, "%s ^3%s rejected your replace request", g_sPluginPrefix, szName);
 		
 		return PLUGIN_HANDLED;
 	}
@@ -1675,8 +1488,8 @@ public replaceRequestMenuHandler(const id, const hMenu, const item)
 	g_flReplaceCooldown[id] = flCooldown;
 	g_flReplaceCooldown[selectedPlayerId] = flCooldown;
 	
-	instantPlayerTransfer(id, iNewTeam, 0);
-	instantPlayerTransfer(selectedPlayerId, CS_TEAM_SPECTATOR, 0);
+	hns_transferPlayer(id, iNewTeam);
+	hns_transferPlayer(selectedPlayerId, CS_TEAM_SPECTATOR);
 	
 	new szName1[32], szName2[32];
 	get_user_name(id, szName1, charsmax(szName1));
@@ -1802,15 +1615,15 @@ printScore(const id)
 		{
 			case CS_TEAM_T:
 			{
-				client_print_color(playerId, RED, szMessageT);
+				client_print_color(playerId, print_team_red, szMessageT);
 			}
 			case CS_TEAM_CT:
 			{
-				client_print_color(playerId, BLUE, szMessageCT);
+				client_print_color(playerId, print_team_blue, szMessageCT);
 			}
 			default:
 			{
-				client_print_color(playerId, GREY, szMessageSpec);
+				client_print_color(playerId, print_team_grey, szMessageSpec);
 			}
 		}
 	}
@@ -1877,7 +1690,7 @@ startMix()
 		log_amx("Could not execute mix started forward");
 	}
 	
-	client_print_color(0, RED, "%s ^3LIVE! GL&HF!", g_sPluginPrefix);
+	client_print_color(0, print_team_red, "%s ^3LIVE! GL&HF!", g_sPluginPrefix);
 	set_task(1.0, "taskLiveMessage");
 }
 

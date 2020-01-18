@@ -1,19 +1,17 @@
 #include <amxmodx>
 #include <amxmisc>
 #include <cstrike>
-#include <chatcolor>
 #include <hamsandwich>
 
 #pragma semicolon			1
 
 #define PLUGIN_NAME			"HNS_MixStats"
-#define PLUGIN_VERSION			"1.0.0"
-#define PLUGIN_AUTHOR			"Reavap"
+#define PLUGIN_VERSION		"1.0.0"
+#define PLUGIN_AUTHOR		"Reavap"
 
-#define MAX_PLAYERS	32
-#define STEAMID_LEN	33
-#define USERNAME_LEN	33
-#define ASSIST_SLOTS	3
+#define STEAMID_LEN			33
+#define USERNAME_LEN		33
+#define ASSIST_SLOTS		3
 
 new g_iCompletedRounds;
 new g_iRoundsToPlay;
@@ -93,7 +91,7 @@ public client_authorized(id)
 	}
 }
 
-public client_disconnect(id)
+public client_disconnected(id)
 {
 	if (g_bSpawnedThisRound[id])
 	{
@@ -395,7 +393,7 @@ public cmdPersonalStats(const id)
 	
 	if (g_bAuthorizeNextRound[id] || !TrieKeyExists(g_tStats, szTrieKey))
 	{
-		client_print_color(id, GREY, "%s There exists no saved stats for you yet.", g_sPluginPrefix);
+		client_print_color(id, print_team_grey, "%s There exists no saved stats for you yet.", g_sPluginPrefix);
 		return PLUGIN_HANDLED;
 	}
 	
@@ -419,7 +417,7 @@ public cmdPersonalStats(const id)
 		formatex(szSeekerText, charsmax(szHiderText), "^3N/A^1");
 	}
 	
-	client_print_color(id, GREY, "%s Survived time: %s | Kills/Assists: %s", g_sPluginPrefix, szHiderText, szSeekerText);
+	client_print_color(id, print_team_grey, "%s Survived time: %s | Kills/Assists: %s", g_sPluginPrefix, szHiderText, szSeekerText);
 	
 	return PLUGIN_HANDLED;
 }
@@ -478,7 +476,7 @@ public cmdMixTop(const id)
 		}
 	}
 	
-	client_print_color(id, GREY, "%s Top list has been printed in your console.", g_sPluginPrefix);
+	client_print_color(id, print_team_grey, "%s Top list has been printed in your console.", g_sPluginPrefix);
 	
 	return PLUGIN_HANDLED;
 }

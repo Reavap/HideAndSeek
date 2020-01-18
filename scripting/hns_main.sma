@@ -86,11 +86,11 @@ public plugin_natives()
 {
 	register_library("hns_main");
 	
-	register_native("hns_changeState","nativeChangeState", 1);
-	register_native("hns_switchTeams","nativeSwitchTeams", 1);
+	register_native("hns_changeState", "nativeChangeState", 0);
+	register_native("hns_switchTeams", "nativeSwitchTeams", 0);
 	
-	register_native("hns_setHideKnife","nativeSetHideKnife", 1);
-	register_native("hns_setHideTimeSound", "nativeSetHideTimeSound", 1);
+	register_native("hns_setHideKnife", "nativeSetHideKnife", 0);
+	register_native("hns_setHideTimeSound", "nativeSetHideTimeSound", 0);
 }
 	
 public plugin_precache() 
@@ -550,7 +550,7 @@ public messageTextMsg(iMessage, iDest, id)
 
 public cmdHideKnife(id)
 {	
-	nativeSetHideKnife(id, !g_bHideKnife[id]);
+	setHideKnife(id, !g_bHideKnife[id]);
 	client_print(id, print_chat, "[HNS] Hide knife %s.", g_bHideKnife[id] ? "enabled" : "disabled");
 	
 	return PLUGIN_HANDLED;
@@ -562,6 +562,28 @@ public cmdHideTimeSound(id)
 	client_print(id, print_chat, "[HNS] Hide time sound %s.", g_bHideTimeSound[id] ? "enabled" : "disabled");
 	
 	return PLUGIN_HANDLED;
+}
+
+setHideKnife(const id, const bool:bValue)
+{
+	g_bHideKnife[id] = bValue;
+	
+	if (g_bAlive[id] && get_user_weapon(id) == CSW_KNIFE)
+	{
+		if (g_bHideKnife[id] && g_iTeam[id] == CS_TEAM_T)
+		{
+			set_pev(id, pev_viewmodel2, g_sBlank);
+		}
+		else
+		{
+			set_pev(id, pev_viewmodel2, g_sKnifeModel_v);
+		}
+	}
+}
+
+setHideTimeSound(const id, const bool:bValue)
+{
+	g_bHideTimeSound[id] = bValue;
 }
 
 public eventTeamInfo()
@@ -888,8 +910,15 @@ remove_hostage()
 	}
 }
 
-public nativeChangeState(ePluginState:eNewState)
+public nativeChangeState(const iPlugin, const iParams)
 {
+	if (iParams != 1)
+	{
+		return PLUGIN_CONTINUE;
+	}
+
+	new ePluginState:eNewState = ePluginState:get_param(1);
+
 	if (g_eState == eNewState)
 	{
 		return PLUGIN_HANDLED;
@@ -922,26 +951,30 @@ public nativeSwitchTeams()
 	return PLUGIN_HANDLED;
 }
 
-public nativeSetHideKnife(id, bool:bValue)
+public nativeSetHideKnife(const iPlugin, const iParams)
 {
-	g_bHideKnife[id] = bValue;
-	
-	if (g_bAlive[id] && get_user_weapon(id) == CSW_KNIFE)
+	if (iParams != 2)
 	{
-		if (g_bHideKnife[id] && g_iTeam[id] == CS_TEAM_T)
-		{
-			set_pev(id, pev_viewmodel2, g_sBlank);
-		}
-		else
-		{
-			set_pev(id, pev_viewmodel2, g_sKnifeModel_v);
-		}
+		return PLUGIN_CONTINUE;
 	}
-	
+
+	new id = get_param(1);
+	new bool:bValue = bool:get_param(2);
+
+	setHideKnife(id, bValue);
 	return PLUGIN_HANDLED;
 }
 
-public nativeSetHideTimeSound(id, bool:bValue)
+public nativeSetHideTimeSound(const iPlugin, const iParams)
 {
-	g_bHideTimeSound[id] = bValue;
+	if (iParams != 2)
+	{
+		return PLUGIN_CONTINUE;
+	}
+
+	new id = get_param(1);
+	new bool:bValue = bool:get_param(2);
+
+	setHideTimeSound(id, bValue);
+	return PLUGIN_HANDLED;
 }
