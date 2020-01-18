@@ -10,23 +10,11 @@
 #pragma semicolon			1
 
 #define PLUGIN_NAME			"HNS_Main"
-#define PLUGIN_VERSION			"1.0.3"
-#define PLUGIN_AUTHOR			"Reavap"
+#define PLUGIN_VERSION		"1.0.4"
+#define PLUGIN_AUTHOR		"Reavap"
 
-#if !defined client_disconnected
-	#define client_disconnected client_disconnect
-#endif
-
-#if !defined MAX_PLAYERS
-	#define MAX_PLAYERS 32
-#endif
-
-#if !defined Ham_CS_Player_ResetMaxSpeed
-	#define Ham_CS_Player_ResetMaxSpeed Ham_Item_PreFrame
-#endif
-
-#define TASKID_BREAKABLES		1000
-#define TASKID_HIDETIMER		2000
+#define TASKID_BREAKABLES	1000
+#define TASKID_HIDETIMER	2000
 
 // CVars
 new hns_flashbangs;
@@ -76,16 +64,14 @@ new const g_sEntitiesToRemove[][] =
 	"monster_scientist"
 };
 
+new const g_sClassBasePlayerWeapon[] = "CBasePlayerWeapon";
+new const g_sMemberNextPrimaryAttack[] = "m_flNextPrimaryAttack";
+new const g_sMemberNextSecondaryAttack[] = "m_flNextSecondaryAttack";
+
 new const g_sWeaponKnife[] = "weapon_knife";
 new const g_sClassBreakable[] = "func_breakable";
 new const g_sKnifeModel_v[] = "models/v_knife.mdl";
 new const g_sBlank[] = "";
-
-const m_pPlayer = 41;
-const EXTRAOFFSET_WEAPONS = 4;
-const m_flNextPrimaryAttack = 46;
-const m_flNextSecondaryAttack = 47;
-const m_pActiveItem = 373;
 
 // HNS States
 new g_iHostageEnt;
@@ -336,7 +322,7 @@ public fwdHamResetMaxSpeed(id)
 
 public fwdSetClientMaxSpeed(id, Float:flMaxSpeed)
 {
-	if (g_bFreezeTime && flMaxSpeed == 1.0 && g_iTeam[id] == CS_TEAM_T && pev(id, pev_maxspeed) != 250.0)
+	if (g_bFreezeTime && flMaxSpeed == 1.0 && g_iTeam[id] == CS_TEAM_T)
 	{
 		set_pev(id, pev_maxspeed, 250.0);
 		return FMRES_HANDLED;
@@ -355,7 +341,7 @@ public fwdHamDeployKnife(iEntity)
 {
 	if (g_eState != KNIFE_MODE)
 	{
-		new iClient = get_pdata_cbase(iEntity, m_pPlayer, EXTRAOFFSET_WEAPONS);
+		new iClient = get_ent_data_entity(iEntity, "CBasePlayerItem", "m_pPlayer");
 		updateKnifeWeapon(iClient, iEntity);
 	}
 	
@@ -364,10 +350,10 @@ public fwdHamDeployKnife(iEntity)
 
 updateKnifeWeapon(const iClient, const iWeaponEntity)
 {
-	if (g_iTeam[iClient] == CS_TEAM_CT && get_pdata_float(iWeaponEntity, m_flNextPrimaryAttack, EXTRAOFFSET_WEAPONS) > 60.0)
+	if (g_iTeam[iClient] == CS_TEAM_CT && get_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack) > 60.0)
 	{
-		set_pdata_float(iWeaponEntity, m_flNextPrimaryAttack, 0.0, EXTRAOFFSET_WEAPONS);
-		set_pdata_float(iWeaponEntity, m_flNextSecondaryAttack, 0.0, EXTRAOFFSET_WEAPONS);
+		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack, 0.0);
+		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextSecondaryAttack, 0.0);
 	}
 	else if (g_iTeam[iClient] == CS_TEAM_T)
 	{
@@ -376,8 +362,8 @@ updateKnifeWeapon(const iClient, const iWeaponEntity)
 			set_pev(iClient, pev_viewmodel2, g_sBlank);
 		}
 		
-		set_pdata_float(iWeaponEntity, m_flNextPrimaryAttack, 9999.0, EXTRAOFFSET_WEAPONS);
-		set_pdata_float(iWeaponEntity, m_flNextSecondaryAttack, 9999.0, EXTRAOFFSET_WEAPONS);
+		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack, 9999.0);
+		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextSecondaryAttack, 9999.0);
 	}
 }
 
@@ -507,13 +493,13 @@ printStatusText(id, targetId, const sMsg[])
 	
 	if (targetId != 0)
 	{
-		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id); 
-		write_byte(1); 
+		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id);
+		write_byte(1);
 		write_short(g_iTeam[id] == g_iTeam[targetId] ? 1 : 2);
 		message_end();
 		
-		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id); 
-		write_byte(2); 
+		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id);
+		write_byte(2);
 		write_short(targetId);
 		message_end();
 	}
@@ -623,8 +609,7 @@ public eventTeamInfo()
 		g_iTeam[id] = iNewTeam;
 		
 		set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & iNewTeam && g_eState != KNIFE_MODE);
-		
-		new iWeaponEntity = get_pdata_cbase(id, m_pActiveItem);
+		new iWeaponEntity = cs_get_user_weapon_entity(id);
 		
 		if (cs_get_weapon_id(iWeaponEntity) == CSW_KNIFE)
 		{
