@@ -3,5 +3,8 @@
 #endif
 #define _hns_teamjoin_included
 
-native hns_transferAllPlayersToSpectator();
-native hns_transferPlayer(id, CsTeams:iNewTeam);
+#pragma reqlib "hns_teamjoin"
+
+native hns_transfer_all_players(CsTeams:team);
+native hns_transfer_player(id, CsTeams:team);
+native hns_swap_players(player1, player2);

@@ -3,16 +3,19 @@
 #define PLUGIN_AUTHOR		"Reavap"
 
 #include <amxmodx>
+#include <amxmisc>
 #include <cstrike>
 #include <fakemeta>
-#include <hns_common>
+#include <hns_mix>
 
-#define blockTeamJoining() (g_currentState != PUBLIC_MODE)
+#pragma semicolon	1
 
-new const g_sJoinTeamCmd[] = "jointeam";
-new const g_sJoinClassCmd[] = "joinclass";
+#define blockTeamJoining() (g_MixState != MixState_Inactive)
 
-new const g_sTeamSelectMenus[][] =
+new const g_JoinTeamCmd[] = "jointeam";
+new const g_JoinClassCmd[] = "joinclass";
+
+new const g_TeamSelectMenus[][] =
 {
 	"#Team_Select",
 	"#Team_Select_Spect",
@@ -20,20 +23,23 @@ new const g_sTeamSelectMenus[][] =
 	"#IG_Team_Select_Spect"
 };
 
-const g_iVGuiMenuTeamSelect = 2;
-const g_iVGuiMenuClassSelectT = 26;
-const g_iVGuiMenuClassSelectCT = 27;
+const g_VGuiMenuTeamSelect = 2;
+const g_VGuiMenuClassSelectT = 26;
+const g_VGuiMenuClassSelectCT = 27;
 
-new Trie:g_tBlockedTeamSelectMenus;
-new g_iShowMenuMessageId;
-new ePluginState:g_currentState = PUBLIC_MODE;
+new const GetPlayersFlags:g_GetPlayerFlags = GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV;
+
+new Trie:g_BlockedTeamSelectMenus;
+new g_ShowMenuMessageId;
+new HnsMixStates:g_MixState;
 
 public plugin_natives()
 {
 	register_library("hns_teamjoin");
 
-	register_native("hns_transferAllPlayersToSpectator", "nativeTransferAllPlayersToSpectator", 0);
-	register_native("hns_transferPlayer", "nativeTransferPlayer", 0);
+	register_native("hns_transfer_all_players", "nativeTransferAllPlayers", 0);
+	register_native("hns_transfer_player", "nativeTransferPlayer", 0);
+	register_native("hns_swap_players", "nativeSwapPlayers", 0);
 }
 
 public plugin_init()
@@ -41,34 +47,34 @@ public plugin_init()
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
 	register_cvar(PLUGIN_NAME, PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY);
 
-	g_iShowMenuMessageId = get_user_msgid("ShowMenu");
+	g_ShowMenuMessageId = get_user_msgid("ShowMenu");
 
-	register_message(g_iShowMenuMessageId, "messageShowMenu");
+	register_message(g_ShowMenuMessageId, "messageShowMenu");
 	register_message(get_user_msgid("VGUIMenu"), "messageVGUIMenu");
 
 	register_clcmd("chooseteam", "cmdBlockJoinTeam");
-	register_clcmd(g_sJoinTeamCmd, "cmdBlockJoinTeam");
-	register_clcmd(g_sJoinClassCmd, "cmdBlockJoinTeam");
+	register_clcmd(g_JoinTeamCmd, "cmdBlockJoinTeam");
+	register_clcmd(g_JoinClassCmd, "cmdBlockJoinTeam");
 
-	g_tBlockedTeamSelectMenus = TrieCreate();
+	g_BlockedTeamSelectMenus = TrieCreate();
 	
-	for (new i = 0; i < sizeof g_sTeamSelectMenus; i++)
+	for (new i = 0; i < sizeof g_TeamSelectMenus; i++)
 	{
-		TrieSetCell(g_tBlockedTeamSelectMenus, g_sTeamSelectMenus[i], 1);
+		TrieSetCell(g_BlockedTeamSelectMenus, g_TeamSelectMenus[i], 1);
 	}
 }
 
-public HNS_StateChanged(const ePluginState:newState)
+public HNS_Mix_StateChanged(const HnsMixStates:newState)
 {
-	g_currentState = newState;
+	g_MixState = newState;
 }
 
 public messageShowMenu(const iMsgid, const iDest, const id)
 {
-	static szMenuCode[32];
-	get_msg_arg_string(4, szMenuCode, charsmax(szMenuCode));
+	static menuCode[32];
+	get_msg_arg_string(4, menuCode, charsmax(menuCode));
 	
-	if (blockTeamJoining() && TrieKeyExists(g_tBlockedTeamSelectMenus, szMenuCode))
+	if (blockTeamJoining() && TrieKeyExists(g_BlockedTeamSelectMenus, menuCode))
 	{
 		delayedPlayerTransfer(id, CS_TEAM_SPECTATOR);
 		return PLUGIN_HANDLED;
@@ -79,17 +85,17 @@ public messageShowMenu(const iMsgid, const iDest, const id)
 
 public messageVGUIMenu(const iMsgid, const iDest, const id)
 {
-	new iMenuType = get_msg_arg_int(1);
+	new menuType = get_msg_arg_int(1);
 	
 	if (blockTeamJoining())
 	{
-		if (iMenuType == g_iVGuiMenuTeamSelect)
+		if (menuType == g_VGuiMenuTeamSelect)
 		{
 			delayedPlayerTransfer(id, CS_TEAM_SPECTATOR);
 			return PLUGIN_HANDLED;
 		}
 		
-		if (iMenuType == g_iVGuiMenuClassSelectT || iMenuType == g_iVGuiMenuClassSelectCT)
+		if (menuType == g_VGuiMenuClassSelectT || menuType == g_VGuiMenuClassSelectCT)
 		{
 			return PLUGIN_HANDLED;
 		}
@@ -123,33 +129,33 @@ delayedPlayerTransfer(const id, const CsTeams:iTeam)
 	new taskId = 1513 + id;
 	remove_task(taskId);
 	
-	new Float:flTime = ((id % 4) + 1) / 10.0;
+	new Float:time = ((id % 4) + 1) / 10.0;
 	
 	new task_params[2];
 	task_params[0] = id;
 	task_params[1] = _:iTeam;
 	
-	set_task(flTime, "taskTransferPlayer", taskId, task_params, sizeof(task_params));
+	set_task(time, "taskTransferPlayer", taskId, task_params, sizeof(task_params));
 }
 
-public taskTransferPlayer(const iParams[])
+public taskTransferPlayer(const params[])
 {
-	new id = iParams[0];
-	new CsTeams:iNewTeam = CsTeams:iParams[1];
+	new id = params[0];
+	new CsTeams:newTeam = CsTeams:params[1];
 	
-	instantPlayerTransfer(id, iNewTeam);
+	instantPlayerTransfer(id, newTeam);
 }
 
-instantPlayerTransfer(const id, const CsTeams:iNewTeam)
+instantPlayerTransfer(const id, const CsTeams:newTeam)
 {
 	if (!is_user_connected(id))
 	{
 		return;
 	}
 
-	new CsTeams:iCurrentTeam = cs_get_user_team(id);
+	new CsTeams:currentTeam = cs_get_user_team(id);
 	
-	if (iCurrentTeam == iNewTeam || iNewTeam == CS_TEAM_UNASSIGNED)
+	if (currentTeam == newTeam || newTeam == CS_TEAM_UNASSIGNED)
 	{
 		return;
 	}
@@ -160,15 +166,15 @@ instantPlayerTransfer(const id, const CsTeams:iNewTeam)
 	}
 	
 	set_ent_data(id, "CBasePlayer", "m_bTeamChanged", false);
-	set_msg_block(g_iShowMenuMessageId, BLOCK_SET);
+	set_msg_block(g_ShowMenuMessageId, BLOCK_SET);
 	
-	if (iCurrentTeam == CS_TEAM_UNASSIGNED && iNewTeam == CS_TEAM_SPECTATOR)
+	if (currentTeam == CS_TEAM_UNASSIGNED && newTeam == CS_TEAM_SPECTATOR)
 	{
-		engclient_cmd(id, g_sJoinTeamCmd, "5");
-		engclient_cmd(id, g_sJoinClassCmd, "5");
+		engclient_cmd(id, g_JoinTeamCmd, "5");
+		engclient_cmd(id, g_JoinClassCmd, "5");
 	}
 	
-	switch (iNewTeam)
+	switch (newTeam)
 	{
 		case CS_TEAM_SPECTATOR:
 		{
@@ -176,44 +182,40 @@ instantPlayerTransfer(const id, const CsTeams:iNewTeam)
 		}
 		case CS_TEAM_T:
 		{
-			engclient_cmd(id, g_sJoinTeamCmd, "1");
-			engclient_cmd(id, g_sJoinClassCmd, "5");
+			engclient_cmd(id, g_JoinTeamCmd, "1");
+			engclient_cmd(id, g_JoinClassCmd, "5");
 		}
 		case CS_TEAM_CT:
 		{
-			engclient_cmd(id, g_sJoinTeamCmd, "2");
-			engclient_cmd(id, g_sJoinClassCmd, "5");
+			engclient_cmd(id, g_JoinTeamCmd, "2");
+			engclient_cmd(id, g_JoinClassCmd, "5");
 		}
 	}
 	
-	set_msg_block(g_iShowMenuMessageId, BLOCK_NOT);
+	set_msg_block(g_ShowMenuMessageId, BLOCK_NOT);
 }
 
-public cmdTransferPlayerToTeam()
+public nativeTransferAllPlayers(const iPlugin, const iParams)
 {
-	if (read_argc() < 3)
+	if (iParams != 1)
+	{
+		return PLUGIN_CONTINUE;
+	}
+
+	new CsTeams:team = CsTeams:get_param(1);
+
+	if (team)
 	{
 		return PLUGIN_HANDLED;
 	}
 
-	new id = read_argv_int(1);
-	new CsTeams:iTeam = CsTeams:read_argv_int(2);
-
-	instantPlayerTransfer(id, iTeam);
-
-	return PLUGIN_HANDLED;
-}
-
-public nativeTransferAllPlayersToSpectator()
-{
-	new aPlayers[32], iPlayerCount, i, playerId;
-	get_players(aPlayers, iPlayerCount, "ch");
+	new players[32], playersCount, playerId;
+	get_players_ex(players, playersCount, g_GetPlayerFlags);
 	
-	for (; i < iPlayerCount; i++)
+	for (new i; i < playersCount; i++)
 	{
-		playerId = aPlayers[i];
-		
-		delayedPlayerTransfer(playerId, CS_TEAM_SPECTATOR);
+		playerId = players[i];
+		delayedPlayerTransfer(playerId, team);
 	}
 
 	return PLUGIN_HANDLED;
@@ -227,9 +229,28 @@ public nativeTransferPlayer(const iPlugin, const iParams)
 	}
 
 	new id = get_param(1);
-	new CsTeams:iNewTeam = CsTeams:get_param(2);
+	new CsTeams:newTeam = CsTeams:get_param(2);
 
-	instantPlayerTransfer(id, iNewTeam);
+	instantPlayerTransfer(id, newTeam);
+
+	return PLUGIN_HANDLED;
+}
+
+public nativeSwapPlayers(const iPlugin, const iParams)
+{
+	if (iParams != 2)
+	{
+		return PLUGIN_CONTINUE;
+	}
+
+	new client1 = get_param(1);
+	new client2 = get_param(2);
+
+	new CsTeams:team1 = cs_get_user_team(client1);
+	new CsTeams:team2 = cs_get_user_team(client2);
+
+	instantPlayerTransfer(client1, team2);
+	instantPlayerTransfer(client2, team1);
 
 	return PLUGIN_HANDLED;
 }

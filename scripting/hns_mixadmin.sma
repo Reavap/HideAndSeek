@@ -14,19 +14,18 @@
 
 #define playerCanAdministrateMix(%1) ((get_user_flags(%1) & MIX_ADMIN_FLAG) > 0)
 #define playerIsOrdinaryAdmin(%1) (!(get_user_flags(%1) & ADMIN_USER))
+#define playerIsTemporaryAdmin(%1) (playerCanAdministrateMix(%1) && !playerIsOrdinaryAdmin(%1))
 
-new const GetPlayersFlags:g_iGetPlayerFlags = GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV;
+new const GetPlayersFlags:g_GetPlayerFlags = GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV;
 
-new bool:g_bGrantedMixAdmin[MAX_PLAYERS + 1];
-new Trie:g_tDisconnectedAdmins;
-
-new eHnsMixState:g_eMixState;
+new Trie:g_DisconnectedTempAdmins;
+new HnsMixStates:g_MixState;
 
 // Vote Mix Admin
-new g_hNominateMixAdminMenu;
-new g_iMixAdminVoteParticipants;
-new g_iMixAdminVotesReceived;
-new Array:g_aVotedMixAdmins;
+new g_VoteMixAdminMenuHandler;
+new g_MixAdminVoteParticipants;
+new g_MixAdminVotesReceived;
+new Array:g_MixAdminVoteStorage;
 
 public plugin_init()
 {
@@ -36,8 +35,8 @@ public plugin_init()
 	register_clcmd("say /nma", "cmdNominateMixAdmin");
 	register_clcmd("say /gma", "cmdGiveMixAdmin");
 
-	g_tDisconnectedAdmins = TrieCreate();
-	g_aVotedMixAdmins = ArrayCreate(2);
+	g_DisconnectedTempAdmins = TrieCreate();
+	g_MixAdminVoteStorage = ArrayCreate(2);
 }
 
 public client_authorized(id)
@@ -48,19 +47,19 @@ public client_authorized(id)
 		return;
 	}
 	
-	static szSteamId[32];
-	get_user_authid(id, szSteamId, charsmax(szSteamId));
-	new Float:flGameTime;
+	static steamid[32];
+	get_user_authid(id, steamid, charsmax(steamid));
+	new Float:gametime;
 
-	if (!TrieGetCell(g_tDisconnectedAdmins, szSteamId, flGameTime))
+	if (!TrieGetCell(g_DisconnectedTempAdmins, steamid, gametime))
 	{
 		return;
 	}
 
-	TrieDeleteKey(g_tDisconnectedAdmins, szSteamId);
-	new const Float:flRevokeAdminAfter = 60.0 * 5;
+	TrieDeleteKey(g_DisconnectedTempAdmins, steamid);
+	new const Float:revokeAdminAfter = 60.0 * 5;
 	
-	if (flRevokeAdminAfter >= get_gametime() - flGameTime)
+	if (revokeAdminAfter >= get_gametime() - gametime)
 	{
 		giveMixAdminToPeasant(id);
 	}
@@ -68,27 +67,25 @@ public client_authorized(id)
 
 public client_disconnected(id)
 {
-	if (g_bGrantedMixAdmin[id])
+	if (playerIsTemporaryAdmin(id))
 	{
-		g_bGrantedMixAdmin[id] = false;
+		new steamid[32];
+		get_user_authid(id, steamid, charsmax(steamid));
 
-		new szSteamId[32];
-		get_user_authid(id, szSteamId, charsmax(szSteamId));
+		TrieSetCell(g_DisconnectedTempAdmins, steamid, get_gametime());
 
-		TrieSetCell(g_tDisconnectedAdmins, szSteamId, get_gametime());
-
-		if (g_eMixState != MIXSTATE_INACTIVE)
+		if (g_MixState != MixState_Inactive)
 		{
-			new szUserName[MAX_NAME_LENGTH];
-			get_user_name(id, szUserName, charsmax(szUserName));
-			client_print_color(id, print_team_red, "* ^3Mix admin %s disconnected", szUserName);
+			new username[MAX_NAME_LENGTH];
+			get_user_name(id, username, charsmax(username));
+			client_print_color(0, print_team_red, "* ^3Mix admin %s disconnected", username);
 		}
 	}
 }
 
-public HNS_Mix_StateChanged(const eHnsMixState:eNewState)
+public HNS_Mix_StateChanged(const HnsMixStates:newState)
 {
-	g_eMixState = eNewState;
+	g_MixState = newState;
 }
 
 public cmdGiveMixAdmin(const id)
@@ -103,51 +100,51 @@ public cmdGiveMixAdmin(const id)
 
 displayGiveMixAdminRightsMenu(const id)
 {
-	new hMenu = menu_create("\rGrant/Revoke mix admin:", "mixAdminRightsMenuHandler");
+	new menu = menu_create("\rGrant/Revoke mix admin:", "mixAdminRightsMenuHandler");
 
-	new aPlayers[MAX_PLAYERS], iPlayerCount;
-	new szUserName[MAX_NAME_LENGTH + 13], szUserId[32];
-	get_players_ex(aPlayers, iPlayerCount, g_iGetPlayerFlags);
+	new players[MAX_PLAYERS], playercount, playerId;
+	new username[MAX_NAME_LENGTH + 16], userid[32];
+	get_players_ex(players, playercount, g_GetPlayerFlags);
 	
-	for (new i; i < iPlayerCount; i++)
+	for (new i; i < playercount; i++)
 	{
-		new playerId = aPlayers[i];
+		playerId = players[i];
 		
 		if (playerIsOrdinaryAdmin(playerId))
 		{
 			continue;
 		}
 		
-		get_user_name(playerId, szUserName, charsmax(szUserName));
-		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
+		get_user_name(playerId, username, charsmax(username));
+		formatex(userid, charsmax(userid), "%d", get_user_userid(playerId));
 
-		if (g_bGrantedMixAdmin[playerId])
+		if (playerIsTemporaryAdmin(playerId))
 		{
-			formatex(szUserName, charsmax(szUserName), "%s [TEMP ADMIN]", szUserName);
+			formatex(username, charsmax(username), "%s [TEMP ADMIN]", username);
 		}
 		
-		menu_additem(hMenu, szUserName, szUserId, 0);
+		menu_additem(menu, username, userid, 0);
 	}
 
-	if (!menu_items(hMenu))
+	if (!menu_items(menu))
 	{
-		menu_destroy(hMenu);
+		menu_destroy(menu);
 		return;
 	}
 	
-	menu_display(id, hMenu, 0, 20);
+	menu_display(id, menu, 0, 20);
 }
 
-public mixAdminRightsMenuHandler(const id, const hMenu, const item)
+public mixAdminRightsMenuHandler(const id, const menu, const item)
 {
 	if (item == MENU_EXIT || item == MENU_TIMEOUT)
 	{
-		menu_destroy(hMenu);
+		menu_destroy(menu);
 		return PLUGIN_HANDLED;
 	}
 	
-	new selectedPlayerId = menu_selected_clientid(hMenu, item);
-	menu_destroy(hMenu);
+	new selectedPlayerId = menu_selected_clientid(menu, item);
+	menu_destroy(menu);
 	
 	if (!selectedPlayerId)
 	{
@@ -155,19 +152,19 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 		return PLUGIN_HANDLED;
 	}
 
-	new szAdminName[MAX_NAME_LENGTH], szPlayerName[MAX_NAME_LENGTH];
-	get_user_name(id, szAdminName, charsmax(szAdminName));
-	get_user_name(selectedPlayerId, szPlayerName, charsmax(szPlayerName));
+	new adminUsername[MAX_NAME_LENGTH], playerUsername[MAX_NAME_LENGTH];
+	get_user_name(id, adminUsername, charsmax(adminUsername));
+	get_user_name(selectedPlayerId, playerUsername, charsmax(playerUsername));
 
-	if (g_bGrantedMixAdmin[selectedPlayerId])
+	if (playerCanAdministrateMix(selectedPlayerId))
 	{
 		removeMixAdminForPeasant(selectedPlayerId);
-		client_print_color(0, print_team_grey, "* ^3%s ^1revoked mix administration rights for ^3%s", szAdminName, szPlayerName);
+		client_print_color(0, print_team_grey, "* ^3%s ^1revoked mix administration rights for ^3%s", adminUsername, playerUsername);
 	}
 	else
 	{
 		giveMixAdminToPeasant(selectedPlayerId);
-		client_print_color(0, print_team_grey, "* ^3%s ^1granted ^3%s ^1mix administration rights", szAdminName, szPlayerName);
+		client_print_color(0, print_team_grey, "* ^3%s ^1granted ^3%s ^1mix administration rights", adminUsername, playerUsername);
 	}
 	
 	return PLUGIN_HANDLED;
@@ -175,16 +172,13 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 
 public cmdNominateMixAdmin(const id)
 {
-	new aPlayers[MAX_PLAYERS], iRetrievedCount;
-	get_players_ex(aPlayers, iRetrievedCount, g_iGetPlayerFlags);
-
 	if (temporaryMixAdminIsAssigned())
 	{
 		client_print_color(id, print_team_red, "* ^3There is already a mix admin in place");
 		return PLUGIN_HANDLED;
 	}
 
-	if (get_playersnum_ex(g_iGetPlayerFlags) < 6)
+	if (get_playersnum_ex(g_GetPlayerFlags) < 6)
 	{
 		client_print_color(id, print_team_red, "* ^3Not enough players on the server to vote");
 		return PLUGIN_HANDLED;
@@ -203,49 +197,49 @@ public cmdNominateMixAdmin(const id)
 
 displayVoteMixAdminMenu()
 {
-	g_hNominateMixAdminMenu = menu_create("\rWho should administrate the mix?", "voteMixAdminMenuHandler");
+	g_VoteMixAdminMenuHandler = menu_create("\rWho should administrate the mix?", "voteMixAdminMenuHandler");
 	
-	new aPlayers[MAX_PLAYERS], iPlayerCount;
-	new szUserName[MAX_NAME_LENGTH], szUserId[32];
-	get_players_ex(aPlayers, iPlayerCount, g_iGetPlayerFlags);
+	new players[MAX_PLAYERS], playercount, playerId;
+	new username[MAX_NAME_LENGTH], userid[32];
+	get_players_ex(players, playercount, g_GetPlayerFlags);
 
-	for (new i; i < iPlayerCount; i++)
+	for (new i; i < playercount; i++)
 	{
-		new playerId = aPlayers[i];
+		playerId = players[i];
 		
 		if (playerCanAdministrateMix(playerId))
 		{
 			continue;
 		}
 		
-		get_user_name(playerId, szUserName, charsmax(szUserName));
-		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
+		get_user_name(playerId, username, charsmax(username));
+		formatex(userid, charsmax(userid), "%d", get_user_userid(playerId));
 
-		menu_additem(g_hNominateMixAdminMenu, szUserName, szUserId, 0);
+		menu_additem(g_VoteMixAdminMenuHandler, username, userid, 0);
 	}
 
-	if (!menu_items(g_hNominateMixAdminMenu))
+	if (!menu_items(g_VoteMixAdminMenuHandler))
 	{
-		menu_destroy(g_hNominateMixAdminMenu);
+		menu_destroy(g_VoteMixAdminMenuHandler);
 		return;
 	}
 
-	g_iMixAdminVoteParticipants = 0;
-	g_iMixAdminVotesReceived = 0;
-	ArrayClear(g_aVotedMixAdmins);
+	g_MixAdminVoteParticipants = 0;
+	g_MixAdminVotesReceived = 0;
+	ArrayClear(g_MixAdminVoteStorage);
 
-	get_players_ex(aPlayers, iPlayerCount, g_iGetPlayerFlags);
+	get_players_ex(players, playercount, g_GetPlayerFlags);
 	
-	for (new i; i < iPlayerCount; i++)
+	for (new i; i < playercount; i++)
 	{
-		g_iMixAdminVoteParticipants++;
-		menu_display(aPlayers[i], g_hNominateMixAdminMenu, 0, 10);
+		g_MixAdminVoteParticipants++;
+		menu_display(players[i], g_VoteMixAdminMenuHandler, 0, 10);
 	}
 
 	set_task(10.5, "taskEndMixAdminVote", TASK_VOTE_MIX_ADMIN);
 }
 
-public voteMixAdminMenuHandler(const id, const hMenu, const item)
+public voteMixAdminMenuHandler(const id, const menu, const item)
 {
 	if (!task_exists(TASK_VOTE_MIX_ADMIN))
 	{
@@ -254,11 +248,11 @@ public voteMixAdminMenuHandler(const id, const hMenu, const item)
 
 	if (item != MENU_TIMEOUT && item != MENU_EXIT)
 	{
-		new selectedUserId = menu_selected_int(hMenu, item);
+		new selectedUserId = menu_selected_int(menu, item);
 		insertVoteResponse(selectedUserId);
 	}
 
-	if (++g_iMixAdminVotesReceived >= g_iMixAdminVoteParticipants && remove_task(TASK_VOTE_MIX_ADMIN))
+	if (++g_MixAdminVotesReceived >= g_MixAdminVoteParticipants && remove_task(TASK_VOTE_MIX_ADMIN))
 	{
 		taskEndMixAdminVote();
 	}
@@ -268,60 +262,60 @@ public voteMixAdminMenuHandler(const id, const hMenu, const item)
 
 insertVoteResponse(const selectedUserId)
 {
-	new iArrayIndex = ArrayFindValue(g_aVotedMixAdmins, selectedUserId);
+	new arrayIndex = ArrayFindValue(g_MixAdminVoteStorage, selectedUserId);
 	new content[2];
 
-	if (iArrayIndex == -1)
+	if (arrayIndex == -1)
 	{
-		iArrayIndex = ArraySize(g_aVotedMixAdmins);
+		arrayIndex = ArraySize(g_MixAdminVoteStorage);
 		content[0] = selectedUserId;
 		content[1] = 1;
 
-		ArrayPushArray(g_aVotedMixAdmins, content);
+		ArrayPushArray(g_MixAdminVoteStorage, content);
 	}
 	else
 	{
-		ArrayGetArray(g_aVotedMixAdmins, iArrayIndex, content);
+		ArrayGetArray(g_MixAdminVoteStorage, arrayIndex, content);
 		content[1]++;
-		ArraySetArray(g_aVotedMixAdmins, iArrayIndex, content);
+		ArraySetArray(g_MixAdminVoteStorage, arrayIndex, content);
 	}
 }
 
 public taskEndMixAdminVote()
 {
-	menu_destroy(g_hNominateMixAdminMenu);
+	menu_destroy(g_VoteMixAdminMenuHandler);
 
-	new iWinner = getMixAdminVoteWinner();
+	new winner = getMixAdminVoteWinner();
 
-	if (!iWinner)
+	if (!winner)
 	{
 		client_print_color(0, print_team_red, "* ^3Failed to assign a mix admin from the vote result");
 		return;
 	}
 
-	new szName[32];
-	get_user_name(iWinner, szName, charsmax(szName));
-	client_print_color(0, print_team_grey, "* ^3%s ^1won the vote and is now assigned mix admin rights", szName);
+	new username[MAX_NAME_LENGTH];
+	get_user_name(winner, username, charsmax(username));
+	client_print_color(0, print_team_grey, "* ^3%s ^1won the vote and is now assigned mix admin rights", username);
 
-	giveMixAdminToPeasant(iWinner);
+	giveMixAdminToPeasant(winner);
 }
 
 getMixAdminVoteWinner()
 {
-	new iVoteEntries = ArraySize(g_aVotedMixAdmins);
-	ArraySort(g_aVotedMixAdmins, "compareVoteCount");
+	new voteEntries = ArraySize(g_MixAdminVoteStorage);
+	ArraySort(g_MixAdminVoteStorage, "compareVoteCount");
 
-	new iWinner;
+	new winner;
 
-	for (new i = 0; i < iVoteEntries; i++)
+	for (new i = 0; i < voteEntries; i++)
 	{
-		if ((iWinner = find_player_ex(FindPlayer_MatchUserId, ArrayGetCell(g_aVotedMixAdmins, i, 0))))
+		if ((winner = find_player_ex(FindPlayer_MatchUserId, ArrayGetCell(g_MixAdminVoteStorage, i, 0))))
 		{
 			break;
 		}
 	}
 
-	return iWinner;
+	return winner;
 }
 
 public compareVoteCount(Array:array, item1, item2)
@@ -345,13 +339,11 @@ public compareVoteCount(Array:array, item1, item2)
 
 giveMixAdminToPeasant(const id)
 {
-	g_bGrantedMixAdmin[id] = true;
 	set_user_flags(id, MIX_ADMIN_FLAG);
 }
 
 removeMixAdminForPeasant(const id)
 {
-	g_bGrantedMixAdmin[id] = false;
 	remove_user_flags(id, MIX_ADMIN_FLAG);
 }
 
@@ -359,7 +351,7 @@ bool:temporaryMixAdminIsAssigned()
 {
 	for (new i = 1; i <= MAX_PLAYERS; i++)
 	{
-		if (g_bGrantedMixAdmin[i])
+		if (playerIsTemporaryAdmin(i))
 		{
 			return true;
 		}
