@@ -106,7 +106,7 @@ public cmdReplace(const id)
 
 displayReplaceMenu(const id)
 {
-	new players[MAX_PLAYERS], playerCount;
+	new players[MAX_PLAYERS], playerCount, playerId;
 	new username[MAX_NAME_LENGTH + 16], userid[32];
 	get_players_ex(players, playerCount, GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV | GetPlayers_MatchTeam, "SPECTATOR");
 	
@@ -123,7 +123,7 @@ displayReplaceMenu(const id)
 	
 	for (new i; i < playerCount; i++)
 	{
-		new playerId = players[i];
+		playerId = players[i];
 		
 		get_user_name(playerId, username, charsmax(username));
 		

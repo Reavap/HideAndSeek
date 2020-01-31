@@ -1,7 +1,10 @@
 #include <amxmodx>
+#include <amxmisc>
 #include <cstrike>
 #include <fakemeta>
-#include <hns_common>
+#include <hns_main>
+#include <hns_mix>
+#include <hns_mixparticipation>
 #include <hns_teamjoin>
 
 #pragma semicolon				1
@@ -15,29 +18,28 @@
 #define TASK_COUNTDOWN			4000
 #define TASK_TRANSFER_PLAYER	5000
 
-#define playerCanAdministrateMix(%1) ((get_user_flags(%1) & PLUGIN_ACCESS_LEVEL) > 0 || g_bTemporaryAdmin[%1])
+#define playerCanAdministrateMix(%1) ((get_user_flags(%1) & PLUGIN_ACCESS_LEVEL) > 0)
 
-#define canTransferPlayers(%1) (g_eMixState == MIX_PAUSED && playerCanAdministrateMix(%1))
+#define canTransferPlayers(%1) (g_MixState == MixState_Paused && playerCanAdministrateMix(%1))
 #define isValidTeamTransfer(%1,%2) ((%1 == CS_TEAM_CT || %1 == CS_TEAM_T) != (%2 == CS_TEAM_CT || %2 == CS_TEAM_T) && %1 != CS_TEAM_UNASSIGNED)
 
 #define isCaptain(%1) (%1 == g_iCaptainT || %1 == g_iCaptainCT)
-#define isPlayersTurnToPick(%1) ((%1 == g_iCaptainT && g_eMixState == SELECT_PLAYER_T) || (%1 == g_iCaptainCT && g_eMixState == SELECT_PLAYER_CT))
+#define isPlayersTurnToPick(%1) ((%1 == g_iCaptainT && g_SetupState == SELECT_PLAYER_T) || (%1 == g_iCaptainCT && g_SetupState == SELECT_PLAYER_CT))
 
-#define canExecuteReplace(%1) ((g_eMixState == MIX_ONGOING && !is_user_alive(id)) || g_eMixState == MIX_PAUSED)
-#define mixIsActive() (g_eMixState != MIX_INACTIVE)
+#define mixIsActive() (g_MixState != MixState_Inactive)
 
 // Cvars
 new mp_roundtime;
 
 // Mix-Forwards (Events)
+new g_MixStateChangedForward;
 new g_iMixStartedForward;
 new g_iMixEndedForward;
 new g_iMixRoundCompletedForward;
 
 // HNS States
+new HnsMixStates:g_MixState;
 new bool:g_bStateChanged;
-
-new Trie:g_tReplaceCooldowns;
 
 new Float:g_flRoundTime;
 new Float:g_flRoundStart;
@@ -48,14 +50,12 @@ new g_iRoundsToPlay;
 new Float:g_flSurvivedTimeTeamT;
 new Float:g_flSurvivedTimeTeamCT;
 
-new bool:g_bTemporaryAdmin[MAX_PLAYERS + 1];
-new bool:g_bNoPlay[MAX_PLAYERS + 1];
-new Float:g_flReplaceCooldown[MAX_PLAYERS + 1];
+new bool:g_OptOutOfMixParticipation[MAX_PLAYERS + 1];
 
 // Mix initialization
-enum eHnsMixState:g_iMixStates (+= 1)
+enum MixSetupStates (+= 1)
 {
-	MIX_INACTIVE = 0,
+	SETUP_NONE = 0,
 	SELECT_ROUNDS,
 	SELECT_ROUNDTIME,
 	SELECT_PLAYER_COUNT,
@@ -63,11 +63,10 @@ enum eHnsMixState:g_iMixStates (+= 1)
 	SELECT_CAPTAIN_CT,
 	DUEL_FIRST_PICK,
 	SELECT_PLAYER_T,
-	SELECT_PLAYER_CT,
-	MIX_PAUSED,
-	MIX_ONGOING
+	SELECT_PLAYER_CT
 };
-new eHnsMixState:g_eMixState;
+
+new MixSetupStates:g_SetupState;
 new g_iMixStartedBy;
 new g_iPlayerCount;
 new g_iCaptainT;
@@ -85,6 +84,7 @@ new const g_sTeamNames[][] =
 
 new const g_sPluginPrefix[] = "^1[^4HNS^1]";
 new const g_sNotPlayingMenuItem[] = " [NOT PLAYING]";
+new const GetPlayersFlags:g_GetPlayerFlags = GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV;
 
 // Not currently in use
 new const g_bEarlyExitSetting = false;
@@ -109,11 +109,6 @@ public plugin_init()
 	register_clcmd("say /spec", "cmdTransferToSpec");
 	register_clcmd("say /pick", "cmdPickPlayer");
 	
-	register_clcmd("say /np", "cmdNoPlay");
-	register_clcmd("say /noplay", "cmdNoPlay");
-	register_clcmd("say /play", "cmdPlay");
-	register_clcmd("say /replace", "cmdReplace");
-	
 	register_clcmd("say /s", "cmdShowScore");
 	register_clcmd("say /score", "cmdShowScore");
 	register_clcmd("say /time", "cmdShowScore");
@@ -121,8 +116,6 @@ public plugin_init()
 	register_clcmd("say /st", "cmdStartingTeam");
 	register_clcmd("say /startingteam", "cmdStartingTeam");
 	
-	g_tReplaceCooldowns = TrieCreate();
-
 	initializeEventForwards();
 }
 
@@ -154,6 +147,13 @@ initializeEventForwards()
 			log_amx("Mix round completed forward could not be created.");
 		}
 	}
+
+	g_MixStateChangedForward = CreateMultiForward("HNS_Mix_StateChanged", ET_IGNORE, FP_CELL);
+
+	if (g_MixStateChangedForward < 0)
+	{
+		log_amx("Mix state changed forward could not be created.");
+	}
 }
 
 public plugin_end()
@@ -166,25 +166,9 @@ public plugin_end()
 	
 	DestroyForward(g_iMixRoundCompletedForward);
 	g_iMixRoundCompletedForward = 0;
-}
 
-public client_authorized(id)
-{
-	g_bTemporaryAdmin[id] = false;
-	g_bNoPlay[id] = false;
-	
-	static szSteamId[32];
-	get_user_authid(id, szSteamId, charsmax(szSteamId));
-	
-	if (TrieKeyExists(g_tReplaceCooldowns, szSteamId))
-	{
-		TrieGetCell(g_tReplaceCooldowns, szSteamId, g_flReplaceCooldown[id]);
-		TrieDeleteKey(g_tReplaceCooldowns, szSteamId);
-	}
-	else
-	{
-		g_flReplaceCooldown[id] = 0.0;
-	}
+	DestroyForward(g_MixStateChangedForward);
+	g_MixStateChangedForward = 0;
 }
 
 public client_disconnected(id)
@@ -205,19 +189,14 @@ public client_disconnected(id)
 	{
 		resetMixInitialization();
 		
-		changeState(PUBLIC_MODE);
+		changeState(MixState_Inactive);
 		serverRestart();
 	}
-	
-	static szSteamId[32];
-	get_user_authid(id, szSteamId, charsmax(szSteamId));
-	
-	new Float:flGameTime = get_gametime();
-	
-	if (g_flReplaceCooldown[id] > flGameTime)
-	{
-		TrieSetCell(g_tReplaceCooldowns, szSteamId, g_flReplaceCooldown[id]);
-	}
+}
+
+public HNS_Mix_ParticipationChanged(const id, const bool:optOut)
+{
+	g_OptOutOfMixParticipation[id] = optOut;
 }
 
 // ===============================================
@@ -249,7 +228,7 @@ public eventRoundStart()
 		flTimeDif = (g_flSurvivedTimeTeamT + maxSurvivalTimeRemainingRounds(CS_TEAM_T, iRoundsLeft)) - g_flSurvivedTimeTeamCT;
 	}
 	
-	if (!g_bStateChanged && g_eMixState == MIX_ONGOING && flTimeDif <= g_flRoundTime && g_bEarlyExitSetting)
+	if (!g_bStateChanged && g_MixState == MixState_Ongoing && flTimeDif <= g_flRoundTime && g_bEarlyExitSetting)
 	{
 		new iSeconds = 10;
 		new Float:flCountdownStart = flTimeDif + 0.1;
@@ -278,7 +257,7 @@ public eventRoundStart()
 
 public eventHostage()
 {
-	if (g_eMixState == MIX_ONGOING)
+	if (g_MixState == MixState_Ongoing)
 	{
 		roundEnd(CS_TEAM_T);
 	}
@@ -303,7 +282,7 @@ public roundEnd(const CsTeams:iWinningTeam)
 		return;
 	}
 	
-	if (g_eMixState == MIX_ONGOING)
+	if (g_MixState == MixState_Ongoing)
 	{
 		new Float:flSurvivedTime;
 		
@@ -345,7 +324,7 @@ public roundEnd(const CsTeams:iWinningTeam)
 			else
 			{
 				g_iCurrentRound++;
-				hns_switchTeams();
+				hns_switch_teams();
 				serverRestartRound();
 			}
 		}
@@ -356,7 +335,7 @@ public roundEnd(const CsTeams:iWinningTeam)
 			log_amx("Could not execute round completed forward");
 		}
 	}
-	else if (g_eMixState == DUEL_FIRST_PICK)
+	else if (g_SetupState == DUEL_FIRST_PICK)
 	{
 		if (iWinningTeam == CS_TEAM_CT)
 		{
@@ -367,8 +346,8 @@ public roundEnd(const CsTeams:iWinningTeam)
 			g_iStartPicker = g_iCaptainT;
 		}
 		
-		g_eMixState = SELECT_PLAYER_T;
-		changeState(PAUSED_MODE);
+		g_SetupState = SELECT_PLAYER_T;
+		hns_change_state(HnsState_Custom);
 		getNextInitalizationMenu(g_iMixStartedBy);
 	}
 }
@@ -387,8 +366,7 @@ Float:maxSurvivalTimeRemainingRounds(const CsTeams:iTeam, const iRoundsLeft)
 
 mixCompleted()
 {
-	changeState(PUBLIC_MODE);
-	g_eMixState = MIX_INACTIVE;
+	changeState(MixState_Inactive);
 	serverRestart();
 	
 	if (g_flSurvivedTimeTeamT == g_flSurvivedTimeTeamCT)
@@ -491,7 +469,12 @@ displayTransferPlayerMenu(const id, const CsTeams:iNewTeam)
 		}
 		
 		get_user_name(playerId, szUserName, charsmax(szUserName));
-		formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_bNoPlay[playerId] ? g_sNotPlayingMenuItem : "");
+
+		if (g_OptOutOfMixParticipation[playerId])
+		{
+			formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_sNotPlayingMenuItem);
+		}
+
 		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
 
 		menu_additem(hMenu, szUserName, szUserId, 0, disableCallBack);
@@ -541,7 +524,7 @@ public transferPlayerMenuHandler(const id, const hMenu, const item)
 		new szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
 		
-		hns_transferPlayer(selectedPlayerId, iNewTeam);
+		hns_transfer_player(selectedPlayerId, iNewTeam);
 		client_print_color(0, getTeamColor(iNewTeam), "%s ^3%s ^1was transfered to ^3%s", g_sPluginPrefix, szName, g_sTeamNames[_:iNewTeam]);
 	}
 	else if (selectedCharacter)
@@ -575,11 +558,6 @@ CsTeams:getNextTransferMenuTeam(const CsTeams:iCurrentTeam)
 	return CS_TEAM_T;
 }
 
-getTeamColor(const CsTeams:iTeam)
-{
-	return iTeam == CS_TEAM_T ? print_team_red : (iTeam == CS_TEAM_CT ? print_team_blue : print_team_grey);
-}
-
 // ===============================================
 // Commands
 // ===============================================
@@ -591,29 +569,27 @@ public cmdTransferToT(const id)
 		displayTransferPlayerMenu(id, CS_TEAM_T);
 		return PLUGIN_HANDLED;
 	}
-	
+
 	return PLUGIN_CONTINUE;
 }
-
 public cmdTransferToCT(const id)
 {
 	if (playerCanAdministrateMix(id))
-	{	
+	{
 		displayTransferPlayerMenu(id, CS_TEAM_CT);
 		return PLUGIN_HANDLED;
 	}
-	
+
 	return PLUGIN_CONTINUE;
 }
-
 public cmdTransferToSpec(const id)
 {
 	if (playerCanAdministrateMix(id))
-	{	
+	{
 		displayTransferPlayerMenu(id, CS_TEAM_SPECTATOR);
 		return PLUGIN_HANDLED;
 	}
-	
+
 	return PLUGIN_CONTINUE;
 }
 
@@ -631,81 +607,6 @@ public cmdPickPlayer(const id)
 	else
 	{
 		client_print_color(id, print_team_red, "%s ^3It's currently not your turn to pick a player", g_sPluginPrefix);
-	}
-	
-	return PLUGIN_HANDLED;
-}
-
-public cmdNoPlay(const id)
-{
-	if (!mixIsActive())
-	{
-		return PLUGIN_CONTINUE;
-	}
-	
-	if (cs_get_user_team(id) != CS_TEAM_SPECTATOR)
-	{
-		client_print_color(id, print_team_red, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
-	}
-	else if (!g_bNoPlay[id])
-	{
-		new szName[32];
-		get_user_name(id, szName, charsmax(szName));
-		
-		client_print_color(id, print_team_grey, "%s ^3%s ^1is not available for playing", g_sPluginPrefix, szName);
-		g_bNoPlay[id] = true;
-	}
-	
-	return PLUGIN_HANDLED;
-}
-
-public cmdPlay(const id)
-{
-	if (!mixIsActive())
-	{
-		return PLUGIN_CONTINUE;
-	}
-	
-	if (cs_get_user_team(id) != CS_TEAM_SPECTATOR)
-	{
-		client_print_color(id, print_team_red, "%s ^3You must be a spectator to execute this command", g_sPluginPrefix);
-	}
-	else if (g_bNoPlay[id])
-	{
-		new szName[32];
-		get_user_name(id, szName, charsmax(szName));
-		
-		client_print_color(0, print_team_grey, "%s ^3%s ^1is available for playing", g_sPluginPrefix, szName);
-		g_bNoPlay[id] = false;
-	}
-	
-	return PLUGIN_HANDLED;
-}
-
-public cmdReplace(const id)
-{
-	if (!mixIsActive())
-	{
-		return PLUGIN_CONTINUE;
-	}
-	
-	new Float:flGameTime = get_gametime();
-	
-	if (cs_get_user_team(id) == CS_TEAM_SPECTATOR)
-	{
-		client_print_color(id, print_team_red, "%s ^3You can not execute this command as a spectator", g_sPluginPrefix);
-	}
-	else if (!canExecuteReplace(id))
-	{
-		client_print_color(id, print_team_red, "%s ^3You must be dead or the game must be paused in order to replace", g_sPluginPrefix);
-	}
-	else if (g_flReplaceCooldown[id] && g_flReplaceCooldown[id] > flGameTime)
-	{
-		client_print_color(id, print_team_red, "%s ^3You currently have a cooldown on this command. Time left: ^1%s", g_sPluginPrefix, getTimeAsText(g_flReplaceCooldown[id] - flGameTime));
-	}
-	else
-	{
-		displayReplaceMenu(id);
 	}
 	
 	return PLUGIN_HANDLED;
@@ -771,7 +672,7 @@ displayMainMenu(const id)
 	new hMenu = menu_create("\rHide and Seek menu:", "menuHandler");
 	new disableCallBack = menu_makecallback("mainMenuDisableCallback");
 	
-	if (g_eMixState == MIX_INACTIVE)
+	if (g_MixState == MixState_Inactive)
 	{
 		menu_additem(hMenu, "\wStart mix", "1", 0, disableCallBack);
 	}
@@ -782,11 +683,11 @@ displayMainMenu(const id)
 	
 	menu_addblank(hMenu, 0);
 	
-	if (g_eMixState != MIX_ONGOING && g_iCurrentRound == 0)
+	if (g_MixState != MixState_Ongoing && g_iCurrentRound == 0)
 	{
 		menu_additem(hMenu, "\wBegin mix", "3", 0, disableCallBack);
 	}
-	else if (g_eMixState != MIX_ONGOING)
+	else if (g_MixState != MixState_Ongoing)
 	{
 		menu_additem(hMenu, "\wResume mix", "4", 0, disableCallBack);
 	}
@@ -800,7 +701,6 @@ displayMainMenu(const id)
 	menu_addblank(hMenu, 0);
 	
 	menu_additem(hMenu, "\wTransfer players", "7", 0, disableCallBack);
-	menu_additem(hMenu, "\wGrant/Revoke mix admin", "8", 0, disableCallBack);
 	
 	menu_display(id, hMenu, 0);
 }
@@ -813,15 +713,11 @@ public mainMenuDisableCallback(const id, const hMenu, const item)
 	{
 		case 3..6:
 		{
-			bEnableItem = g_eMixState != MIX_INACTIVE;
+			bEnableItem = g_MixState != MixState_Inactive;
 		}
 		case 7:
 		{
 			bEnableItem = canTransferPlayers(id);
-		}
-		case 8:
-		{
-			bEnableItem = (get_user_flags(id) & PLUGIN_ACCESS_LEVEL) > 0;
 		}
 	}
 	
@@ -846,16 +742,16 @@ public menuHandler(const id, const hMenu, const item)
 	{
 		case 1:
 		{
-			if (g_eMixState != MIX_INACTIVE)
+			if (g_MixState != MixState_Inactive)
 			{
 				client_print_color(id, print_team_red, "%s ^3There is already a mix in progress", g_sPluginPrefix);
 			}
 			else
 			{
-				changeState(PAUSED_MODE);
+				changeState(MixState_Setup);
 				client_print_color(0, print_team_red, "%s ^3%s ^1started a new mix", g_sPluginPrefix, szAdminName);
 				
-				hns_transferAllPlayersToSpectator();
+				hns_transfer_all_players(CS_TEAM_SPECTATOR);
 				
 				g_iMixStartedBy = id;
 				getNextInitalizationMenu(id);
@@ -866,7 +762,7 @@ public menuHandler(const id, const hMenu, const item)
 			resetMixInitialization();
 			resetMixData();
 				
-			changeState(PUBLIC_MODE);
+			changeState(MixState_Inactive);
 			serverRestart();
 			
 			client_print_color(0, print_team_red, "%s ^3%s ^1terminated the mix", g_sPluginPrefix, szAdminName);
@@ -877,11 +773,9 @@ public menuHandler(const id, const hMenu, const item)
 		}
 		case 4:
 		{
-			if (g_eMixState == MIX_PAUSED)
+			if (g_MixState == MixState_Paused)
 			{
-				g_bStateChanged = true;
-				g_eMixState = MIX_ONGOING;
-				changeState(COMPETITIVE_MODE);
+				changeState(MixState_Ongoing);
 				
 				serverRestartRound();
 				
@@ -891,11 +785,9 @@ public menuHandler(const id, const hMenu, const item)
 		}
 		case 5:
 		{
-			if (g_eMixState == MIX_ONGOING)
+			if (g_MixState == MixState_Ongoing)
 			{
-				g_bStateChanged = true;
-				g_eMixState = MIX_PAUSED;
-				changeState(PAUSED_MODE);
+				changeState(MixState_Paused);
 				
 				client_print_color(0, print_team_red, "%s ^3%s ^1paused the mix", g_sPluginPrefix, szAdminName);
 				
@@ -912,78 +804,6 @@ public menuHandler(const id, const hMenu, const item)
 		{
 			displayTransferPlayerMenu(id, CS_TEAM_T);
 		}
-		case 8:
-		{
-			displayGiveMixAdminRightsMenu(id);
-		}
-	}
-	
-	return PLUGIN_HANDLED;
-}
-
-displayGiveMixAdminRightsMenu(const id)
-{
-	new hMenu = menu_create("\rGrant/Revoke mix admin:", "mixAdminRightsMenuHandler");
-	
-	new aPlayers[MAX_PLAYERS], iPlayerCount;
-	get_players(aPlayers, iPlayerCount, "ch");
-	
-	for (new i; i < iPlayerCount; i++)
-	{
-		static szUserName[48], szUserId[32];
-		new playerId = aPlayers[i];
-		
-		if (get_user_flags(playerId) & PLUGIN_ACCESS_LEVEL > 0)
-		{
-			continue;
-		}
-		
-		get_user_name(playerId, szUserName, charsmax(szUserName));
-		if (g_bTemporaryAdmin[playerId])
-		{
-			formatex(szUserName, charsmax(szUserName), "%s [TEMP ADMIN]", szUserName);
-		}
-		
-		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
-
-		menu_additem(hMenu, szUserName, szUserId, 0);
-	}
-	
-	menu_display(id, hMenu, 0);
-}
-
-public mixAdminRightsMenuHandler(const id, const hMenu, const item)
-{
-	if (item == MENU_EXIT)
-	{
-		menu_destroy(hMenu);
-		return PLUGIN_HANDLED;
-	}
-	
-	new selectedPlayerId = getSelectedPlayerInMenu(hMenu, item);
-	menu_destroy(hMenu);
-	
-	if (!selectedPlayerId)
-	{
-		client_print_color(id, print_team_red, "%s ^3Failed to perform the action on the selected player", g_sPluginPrefix);
-	}
-	else
-	{
-		g_bTemporaryAdmin[selectedPlayerId] = !g_bTemporaryAdmin[selectedPlayerId];
-		
-		static szAdminName[32], szPlayerName[32];
-		
-		get_user_name(id, szAdminName, charsmax(szAdminName));
-		get_user_name(selectedPlayerId, szPlayerName, charsmax(szPlayerName));
-		
-		if (g_bTemporaryAdmin[selectedPlayerId])
-		{
-			client_print_color(0, print_team_grey, "%s ^3%s ^1granted ^3%s ^1mix administration rights", g_sPluginPrefix, szAdminName, szPlayerName);
-		}
-		else
-		{
-			client_print_color(0, print_team_grey, "%s ^3%s ^1revoked mix administration rights for ^3%s", g_sPluginPrefix, szAdminName, szPlayerName);
-		}
 	}
 	
 	return PLUGIN_HANDLED;
@@ -995,7 +815,7 @@ public mixAdminRightsMenuHandler(const id, const hMenu, const item)
 
 resetMixInitialization()
 {
-	g_eMixState = MIX_INACTIVE;
+	g_SetupState = SETUP_NONE;
 	g_iMixStartedBy = 0;
 	
 	g_iPlayerCount = 0;
@@ -1006,10 +826,10 @@ resetMixInitialization()
 
 getNextInitalizationMenu(const id)
 {
-	if (g_eMixState == SELECT_PLAYER_T || g_eMixState == SELECT_PLAYER_CT)
+	if (g_SetupState == SELECT_PLAYER_T || g_SetupState == SELECT_PLAYER_CT)
 	{
-		new iTs = getPlayerCount(CS_TEAM_T);
-		new iCTs = getPlayerCount(CS_TEAM_CT);
+		new iTs = get_playersnum_ex(g_GetPlayerFlags | GetPlayers_MatchTeam, "TERRORIST");
+		new iCTs = get_playersnum_ex(g_GetPlayerFlags | GetPlayers_MatchTeam, "CT");
 		
 		if (iTs == g_iPlayerCount && iCTs == g_iPlayerCount)
 		{
@@ -1018,27 +838,27 @@ getNextInitalizationMenu(const id)
 		}
 		else if (iTs < iCTs)
 		{
-			g_eMixState = SELECT_PLAYER_T;
+			g_SetupState = SELECT_PLAYER_T;
 		}
 		else if (iTs > iCTs)
 		{
-			g_eMixState = SELECT_PLAYER_CT;
+			g_SetupState = SELECT_PLAYER_CT;
 		}
 		else if (g_iStartPicker == g_iCaptainT)
 		{
-			g_eMixState = SELECT_PLAYER_T;
+			g_SetupState = SELECT_PLAYER_T;
 		}
 		else
 		{
-			g_eMixState = SELECT_PLAYER_CT;
+			g_SetupState = SELECT_PLAYER_CT;
 		}
 	}
 	else
 	{
-		g_eMixState++;
+		g_SetupState++;
 	}
 	
-	switch (g_eMixState)
+	switch (g_SetupState)
 	{
 		case SELECT_ROUNDS:
 		{
@@ -1058,7 +878,7 @@ getNextInitalizationMenu(const id)
 		}
 		case DUEL_FIRST_PICK:
 		{
-			changeState(KNIFE_MODE);
+			hns_change_state(HnsState_Knife);
 			serverRestart();
 		}
 		case SELECT_PLAYER_T:
@@ -1215,7 +1035,12 @@ displayCaptainMenu(const id)
 		}
 		
 		get_user_name(playerId, szUserName, charsmax(szUserName));
-		formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_bNoPlay[playerId] ? g_sNotPlayingMenuItem : "");
+
+		if (g_OptOutOfMixParticipation[playerId])
+		{
+			formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_sNotPlayingMenuItem);
+		}
+
 		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
 
 		menu_additem(hMenu, szUserName, szUserId, 0, disableCallBack);
@@ -1236,7 +1061,7 @@ public captainMenuHandler(const id, const hMenu, const item)
 	new selectedCharacter = getSelectedCharacter(hMenu, item);
 	menu_destroy(hMenu);
 	
-	new CsTeams:iNewTeam = (g_eMixState == SELECT_CAPTAIN_T ? CS_TEAM_T : CS_TEAM_CT);
+	new CsTeams:iNewTeam = (g_SetupState == SELECT_CAPTAIN_T ? CS_TEAM_T : CS_TEAM_CT);
 	
 	if (selectedCharacter == 'R')
 	{
@@ -1246,7 +1071,7 @@ public captainMenuHandler(const id, const hMenu, const item)
 		static szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
 		
-		hns_transferPlayer(selectedPlayerId, iNewTeam);
+		hns_transfer_player(selectedPlayerId, iNewTeam);
 		client_print_color(0, getTeamColor(iNewTeam), "%s ^3%s ^1was selected as a ^3captain", g_sPluginPrefix, szName);
 		
 		if (iNewTeam == CS_TEAM_T)
@@ -1292,7 +1117,12 @@ displayPickPlayerMenu(const id)
 		}
 		
 		get_user_name(playerId, szUserName, charsmax(szUserName));
-		formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_bNoPlay[playerId] ? g_sNotPlayingMenuItem : "");
+
+		if (g_OptOutOfMixParticipation[playerId])
+		{
+			formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_sNotPlayingMenuItem);
+		}
+
 		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
 
 		menu_additem(hMenu, szUserName, szUserId, 0, disableCallBack);
@@ -1320,7 +1150,7 @@ public pickPlayerMenuHandler(const id, const hMenu, const item)
 	}
 	else if (selectedPlayerId && isValidTeamTransfer(cs_get_user_team(selectedPlayerId), iNewTeam))
 	{
-		hns_transferPlayer(selectedPlayerId, iNewTeam);
+		hns_transfer_player(selectedPlayerId, iNewTeam);
 		
 		static szName[32];
 		get_user_name(selectedPlayerId, szName, charsmax(szName));
@@ -1336,166 +1166,6 @@ public pickPlayerMenuHandler(const id, const hMenu, const item)
 	}
 	
 	displayPickPlayerMenu(id);
-	
-	return PLUGIN_HANDLED;
-}
-
-// ===============================================
-// Player utils
-// ===============================================
-
-displayReplaceMenu(const id)
-{
-	new hMenu = menu_create("\rSelect a player to replace with:", "replaceMenuHandler");
-	new disableCallBack = menu_makecallback("replaceMenuCallBack");
-	menu_additem(hMenu, "Refresh menu", "R", 0, _);
-	
-	new aPlayers[MAX_PLAYERS], iPlayerCount;
-	get_players(aPlayers, iPlayerCount, "ch");
-	
-	new Float:flGameTime = get_gametime();
-	
-	for (new i; i < iPlayerCount; i++)
-	{
-		static szUserName[48], szUserId[32];
-		new playerId = aPlayers[i];
-		
-		if (cs_get_user_team(playerId) != CS_TEAM_SPECTATOR)
-		{
-			continue;
-		}
-		
-		get_user_name(playerId, szUserName, charsmax(szUserName));
-		
-		if (g_bNoPlay[playerId])
-		{
-			formatex(szUserName, charsmax(szUserName), "%s%s", szUserName, g_sNotPlayingMenuItem);
-		}
-		else if (g_flReplaceCooldown[playerId] > flGameTime)
-		{
-			formatex(szUserName, charsmax(szUserName), "%s [COOLDOWN]", szUserName);
-		}
-		
-		formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(playerId));
-
-		menu_additem(hMenu, szUserName, szUserId, 0, disableCallBack);
-	}
-	
-	menu_display(id, hMenu, 0);
-}
-
-public replaceMenuHandler(const id, const hMenu, const item)
-{
-	if (item == MENU_EXIT)
-	{
-		menu_destroy(hMenu);
-		return PLUGIN_HANDLED;
-	}
-	
-	new selectedPlayerId = getSelectedPlayerInMenu(hMenu, item);
-	new selectedCharacter = getSelectedCharacter(hMenu, item);
-	menu_destroy(hMenu);
-	
-	new CsTeams:iNewTeam = cs_get_user_team(id);
-	
-	if (iNewTeam == CS_TEAM_SPECTATOR || !canExecuteReplace(id))
-	{
-		static szName[32];
-		get_user_name(id, szName, charsmax(szName));
-		client_print_color(id, print_team_grey, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
-		
-		return PLUGIN_HANDLED;
-	}
-	
-	if (selectedCharacter == 'R')
-	{
-	}
-	else if (selectedPlayerId && isValidTeamTransfer(cs_get_user_team(selectedPlayerId), iNewTeam))
-	{
-		static szName[32];
-		get_user_name(selectedPlayerId, szName, charsmax(szName));
-		client_print_color(id, print_team_grey, "%s Sent replace request to ^3%s", g_sPluginPrefix, szName);
-		
-		displayReplaceRequestMenu(selectedPlayerId, id);
-		return PLUGIN_HANDLED;
-	}
-	else
-	{
-		client_print_color(id, print_team_red, "%s ^3Can not replace with the selected player", g_sPluginPrefix);
-	}
-	
-	displayReplaceMenu(id);
-	
-	return PLUGIN_HANDLED;
-}
-
-public replaceMenuCallBack(const id, const hMenu, const item)
-{
-	new selectedPlayer = getSelectedPlayerInMenu(hMenu, item);
-	
-	if (selectedPlayer && (g_bNoPlay[selectedPlayer] || g_flReplaceCooldown[selectedPlayer] > get_gametime()))
-	{
-		return ITEM_DISABLED;
-	}
-	
-	return ITEM_ENABLED;
-}
-
-displayReplaceRequestMenu(const id, const replaceWithId)
-{
-	static szMenuTitle[32], szUserId[32];
-	
-	get_user_name(replaceWithId, szUserId, charsmax(szUserId));
-	formatex(szMenuTitle, charsmax(szMenuTitle), "\rReplace %s?", szUserId);
-	
-	formatex(szUserId, charsmax(szUserId), "%d", get_user_userid(replaceWithId));
-	
-	new hMenu = menu_create(szMenuTitle, "replaceRequestMenuHandler");
-	
-	menu_additem(hMenu, "Accept", szUserId, 0);
-	menu_additem(hMenu, "Reject", szUserId, 0);
-	
-	menu_display(id, hMenu, 0);
-}
-
-public replaceRequestMenuHandler(const id, const hMenu, const item)
-{
-	new selectedPlayerId = getSelectedPlayerInMenu(hMenu, item);
-	menu_destroy(hMenu);
-	
-	if (item == MENU_EXIT || !selectedPlayerId)
-	{
-		return PLUGIN_HANDLED;
-	}
-	
-	new CsTeams:iNewTeam = cs_get_user_team(selectedPlayerId);
-	
-	if (!isValidTeamTransfer(cs_get_user_team(id), iNewTeam) || !isValidTeamTransfer(iNewTeam, CS_TEAM_SPECTATOR) || !canExecuteReplace(selectedPlayer))
-	{
-		return PLUGIN_HANDLED;
-	}
-	else if (item == 1)
-	{
-		static szName[32];
-		get_user_name(id, szName, charsmax(szName));
-		client_print_color(selectedPlayerId, print_team_red, "%s ^3%s rejected your replace request", g_sPluginPrefix, szName);
-		
-		return PLUGIN_HANDLED;
-	}
-	
-	new Float:flCooldown = get_gametime() + 60.0 * 5;
-	
-	g_flReplaceCooldown[id] = flCooldown;
-	g_flReplaceCooldown[selectedPlayerId] = flCooldown;
-	
-	hns_transferPlayer(id, iNewTeam);
-	hns_transferPlayer(selectedPlayerId, CS_TEAM_SPECTATOR);
-	
-	new szName1[32], szName2[32];
-	get_user_name(id, szName1, charsmax(szName1));
-	get_user_name(selectedPlayerId, szName2, charsmax(szName2));
-	
-	client_print_color(0, getTeamColor(iNewTeam), "%s ^3%s ^1replaced ^3%s", g_sPluginPrefix, szName1, szName2);
 	
 	return PLUGIN_HANDLED;
 }
@@ -1541,7 +1211,7 @@ public notPlayingMenuCallBack(const id, const hMenu, const item)
 {
 	new selectedPlayer = getSelectedPlayerInMenu(hMenu, item);
 	
-	if (selectedPlayer && g_bNoPlay[selectedPlayer])
+	if (selectedPlayer && g_OptOutOfMixParticipation[selectedPlayer])
 	{
 		return ITEM_DISABLED;
 	}
@@ -1549,12 +1219,30 @@ public notPlayingMenuCallBack(const id, const hMenu, const item)
 	return ITEM_ENABLED;
 }
 
-changeState(const ePluginState:eNewState)
+changeState(const HnsMixStates:newState)
 {
-	hns_changeState(eNewState);
+	if (g_MixState == newState)
+	{
+		return;
+	}
+
+	if (g_MixState == MixState_Inactive)
+	{
+		hns_change_state(HnsState_Custom);
+	}
+	else if (newState == MixState_Inactive)
+	{
+		hns_change_state(HnsState_Public);
+	}
+
 	g_bStateChanged = true;
-	
+	g_MixState = newState;
 	remove_task(TASK_COUNTDOWN);
+
+	if (!ExecuteForward(g_MixStateChangedForward, _, newState))
+	{
+		log_amx("Could not execute mix state changed forward");
+	}
 }
 
 printScore(const id)
@@ -1572,7 +1260,7 @@ printScore(const id)
 		flTimeTeamCT = g_flSurvivedTimeTeamT;
 	}
 	
-	if (g_flRoundStart && g_eMixState == MIX_ONGOING && !g_bStateChanged)
+	if (g_flRoundStart && g_MixState == MixState_Ongoing && !g_bStateChanged)
 	{
 		new Float:flCurrentTime = get_gametime() - g_flRoundStart;
 		flTimeTeamT += flCurrentTime;
@@ -1593,19 +1281,19 @@ printScore(const id)
 	static szMessageT[96], szMessageCT[96], szMessageSpec[96];
 	
 	formatex(szMessageT, charsmax(szMessageT), "%s [^4%s ^3T ^1| CT ^4%s^1] [R %d/%d]%s", g_sPluginPrefix,
-	getTimeAsText(flTimeTeamT), getTimeAsText(flTimeTeamCT),
+	getTimeAsText(flTimeTeamT, true), getTimeAsText(flTimeTeamCT, true),
 	g_iCurrentRound, g_iRoundsToPlay,
-	g_eMixState == MIX_PAUSED ? " ^1[^4PAUSED^1]" : "");
+	g_MixState == MixState_Paused ? " ^1[^4PAUSED^1]" : "");
 	
 	formatex(szMessageCT, charsmax(szMessageCT), "%s [^4%s ^1T | ^3CT ^4%s^1] [R %d/%d]%s", g_sPluginPrefix,
-	getTimeAsText(flTimeTeamT), getTimeAsText(flTimeTeamCT),
+	getTimeAsText(flTimeTeamT, true), getTimeAsText(flTimeTeamCT, true),
 	g_iCurrentRound, g_iRoundsToPlay,
-	g_eMixState == MIX_PAUSED ? " ^1[^4PAUSED^1]" : "");
+	g_MixState == MixState_Paused ? " ^1[^4PAUSED^1]" : "");
 	
 	formatex(szMessageSpec, charsmax(szMessageSpec), "%s [^4%s ^3T ^1| ^3CT ^4%s^1] [R %d/%d]%s", g_sPluginPrefix,
-	getTimeAsText(flTimeTeamT), getTimeAsText(flTimeTeamCT),
+	getTimeAsText(flTimeTeamT, true), getTimeAsText(flTimeTeamCT, true),
 	g_iCurrentRound, g_iRoundsToPlay,
-	g_eMixState == MIX_PAUSED ? " ^1[^4PAUSED^1]" : "");
+	g_MixState == MixState_Paused ? " ^1[^4PAUSED^1]" : "");
 	
 	for (new i; i < iPlayerCount; i++)
 	{
@@ -1627,25 +1315,6 @@ printScore(const id)
 			}
 		}
 	}
-}
-
-getTimeAsText(const Float:flTime)
-{
-	static szTime[10];
-	new iTime, iMinutes, iSeconds, iMilliSeconds;
-	
-	iTime = floatround(flTime, floatround_floor);
-	iMinutes = iTime / 60;
-	iSeconds = iTime - iMinutes * 60;
-	iMilliSeconds = floatround((flTime - iTime) * 1000.0, floatround_floor);
-	
-	formatex(szTime, charsmax(szTime), "%s%d:%s%d.%s%s%d",
-	(iMinutes < 10 ? "0" : ""), iMinutes,
-	(iSeconds < 10 ? "0" : ""), iSeconds,
-	(iMilliSeconds < 100 ? "0" : ""),
-	(iMilliSeconds < 10 ? "0" : ""), iMilliSeconds);
-	
-	return szTime;
 }
 
 serverRestartRound()
@@ -1679,9 +1348,7 @@ startMix()
 	g_iCurrentRound = 1;
 	
 	resetMixInitialization();
-	g_eMixState = MIX_ONGOING;
-	
-	changeState(COMPETITIVE_MODE);
+	changeState(MixState_Ongoing);
 	serverRestart();
 	
 	new iForwardReturn;
@@ -1737,22 +1404,4 @@ public taskCountDown(const iParams[])
 		
 		mixCompleted();
 	}
-}
-
-getPlayerCount(CsTeams:iTeam)
-{
-	new iPlayerCount = 0;
-	
-	static aPlayers[MAX_PLAYERS], iRetrievedCount;
-	get_players(aPlayers, iRetrievedCount, "ch");
-	
-	for (new i; i < iRetrievedCount; i++)
-	{
-		if (cs_get_user_team(aPlayers[i]) == iTeam)
-		{
-			iPlayerCount++;
-		}
-	}
-	
-	return iPlayerCount;
 }

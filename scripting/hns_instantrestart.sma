@@ -9,8 +9,8 @@
 #define PLUGIN_VERSION	"1.0.1"
 #define PLUGIN_AUTHOR	"Reavap"
 
-new const multiPlayerClass[] = "CHalfLifeMultiplay";
-new const Float:restartDelay = 0.3;
+new const g_HalfLifeMultiPlayClass[] = "CHalfLifeMultiplay";
+new const Float:g_RestartDelay = 0.3;
 
 public plugin_init() 
 {
@@ -23,10 +23,10 @@ public plugin_init()
 
 public cmdRestart()
 {
-	new players[MAX_PLAYERS], playerCount, playerId;
-	get_players(players, playerCount);
+	new players[MAX_PLAYERS], playercount, playerId;
+	get_players(players, playercount);
 	
-	for (new i = 0; i < playerCount; i++)
+	for (new i = 0; i < playercount; i++)
 	{
 		playerId = players[i];
 		
@@ -34,18 +34,18 @@ public cmdRestart()
 		cs_set_user_deaths(playerId, 0);
 	}
 
-	set_gamerules_int(multiPlayerClass, "m_iNumCTWins",0);
-	set_gamerules_int(multiPlayerClass, "m_iNumTerroristWins", 0);
-	set_gamerules_float(multiPlayerClass, "m_fTeamCount", get_gametime() + restartDelay);
-	set_gamerules_int(multiPlayerClass, "m_bRoundTerminating", true);
+	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_iNumCTWins",0);
+	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_iNumTerroristWins", 0);
+	set_gamerules_float(g_HalfLifeMultiPlayClass, "m_fTeamCount", get_gametime() + g_RestartDelay);
+	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_bRoundTerminating", true);
 	
 	return PLUGIN_HANDLED;
 }
 
 public cmdRestartRound()
 {
-	set_gamerules_float(multiPlayerClass, "m_fTeamCount", get_gametime() + restartDelay);
-	set_gamerules_int(multiPlayerClass, "m_bRoundTerminating", true);
+	set_gamerules_float(g_HalfLifeMultiPlayClass, "m_fTeamCount", get_gametime() + g_RestartDelay);
+	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_bRoundTerminating", true);
 	
 	return PLUGIN_HANDLED;
 }

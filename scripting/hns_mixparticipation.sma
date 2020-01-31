@@ -84,7 +84,7 @@ changeOptOutStatus(const id, bool:optOut)
 		log_amx("Could not execute mix participation changed forward");
 	}
 
-	new userName[32];
+	new userName[MAX_NAME_LENGTH];
 	get_user_name(id, userName, charsmax(userName));
 
 	if (optOut)

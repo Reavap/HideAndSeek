@@ -3,8 +3,6 @@
 #endif
 #define _hns_mix_included
 
-#pragma reqlib "hns_mix"
-
 enum HnsMixStates (+= 1)
 {
 	MixState_Inactive = 0,

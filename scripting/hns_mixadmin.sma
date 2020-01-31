@@ -32,7 +32,9 @@ public plugin_init()
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
 	register_cvar(PLUGIN_NAME, PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY);
 
-	register_clcmd("say /nma", "cmdNominateMixAdmin");
+	register_clcmd("say /vma", "cmdVoteMixAdmin");
+	register_clcmd("say /nma", "cmdVoteMixAdmin");
+
 	register_clcmd("say /gma", "cmdGiveMixAdmin");
 
 	g_DisconnectedTempAdmins = TrieCreate();
@@ -78,7 +80,7 @@ public client_disconnected(id)
 		{
 			new username[MAX_NAME_LENGTH];
 			get_user_name(id, username, charsmax(username));
-			client_print_color(0, print_team_red, "* ^3Mix admin %s disconnected", username);
+			client_print_color(0, print_team_red, "^3Mix admin %s disconnected", username);
 		}
 	}
 }
@@ -148,7 +150,7 @@ public mixAdminRightsMenuHandler(const id, const menu, const item)
 	
 	if (!selectedPlayerId)
 	{
-		client_print_color(id, print_team_red, "* ^3Failed to perform the action on the selected player");
+		client_print_color(id, print_team_red, "^3Failed to perform the action on the selected player");
 		return PLUGIN_HANDLED;
 	}
 
@@ -159,34 +161,34 @@ public mixAdminRightsMenuHandler(const id, const menu, const item)
 	if (playerCanAdministrateMix(selectedPlayerId))
 	{
 		removeMixAdminForPeasant(selectedPlayerId);
-		client_print_color(0, print_team_grey, "* ^3%s ^1revoked mix administration rights for ^3%s", adminUsername, playerUsername);
+		client_print_color(0, print_team_grey, "^3%s ^1revoked mix administration rights for ^3%s", adminUsername, playerUsername);
 	}
 	else
 	{
 		giveMixAdminToPeasant(selectedPlayerId);
-		client_print_color(0, print_team_grey, "* ^3%s ^1granted ^3%s ^1mix administration rights", adminUsername, playerUsername);
+		client_print_color(0, print_team_grey, "^3%s ^1granted ^3%s ^1mix administration rights", adminUsername, playerUsername);
 	}
 	
 	return PLUGIN_HANDLED;
 }
 
-public cmdNominateMixAdmin(const id)
+public cmdVoteMixAdmin(const id)
 {
 	if (temporaryMixAdminIsAssigned())
 	{
-		client_print_color(id, print_team_red, "* ^3There is already a mix admin in place");
+		client_print_color(id, print_team_red, "^3There is already a mix admin in place");
 		return PLUGIN_HANDLED;
 	}
 
 	if (get_playersnum_ex(g_GetPlayerFlags) < 6)
 	{
-		client_print_color(id, print_team_red, "* ^3Not enough players on the server to vote");
+		client_print_color(id, print_team_red, "^3Not enough players on the server to vote");
 		return PLUGIN_HANDLED;
 	}
 
 	if (task_exists(TASK_VOTE_MIX_ADMIN))
 	{
-		client_print_color(id, print_team_red, "* ^3There is already a vote in progress");
+		client_print_color(id, print_team_red, "^3There is already a vote in progress");
 		return PLUGIN_HANDLED;
 	}
 
@@ -289,13 +291,13 @@ public taskEndMixAdminVote()
 
 	if (!winner)
 	{
-		client_print_color(0, print_team_red, "* ^3Failed to assign a mix admin from the vote result");
+		client_print_color(0, print_team_red, "^3Failed to assign a mix admin from the vote result");
 		return;
 	}
 
 	new username[MAX_NAME_LENGTH];
 	get_user_name(winner, username, charsmax(username));
-	client_print_color(0, print_team_grey, "* ^3%s ^1won the vote and is now assigned mix admin rights", username);
+	client_print_color(0, print_team_grey, "^3%s ^1won the vote and is now assigned mix admin rights", username);
 
 	giveMixAdminToPeasant(winner);
 }
@@ -349,9 +351,12 @@ removeMixAdminForPeasant(const id)
 
 bool:temporaryMixAdminIsAssigned()
 {
-	for (new i = 1; i <= MAX_PLAYERS; i++)
+	new players[MAX_PLAYERS], playercount;
+	get_players_ex(players, playercount, g_GetPlayerFlags);
+
+	for (new i = 0; i < playercount; i++)
 	{
-		if (playerIsTemporaryAdmin(i))
+		if (playerIsTemporaryAdmin(players[i]))
 		{
 			return true;
 		}

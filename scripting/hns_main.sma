@@ -5,7 +5,7 @@
 #include <fakemeta>
 #include <fun>
 #include <hamsandwich>
-#include <hns_common>
+#include <hns_main>
 
 #pragma semicolon			1
 
@@ -35,7 +35,6 @@ new g_iHnsStateChangedForward;
 new g_iHnsNewRoundForward;
 
 // Players states
-new g_iMaxPlayers;
 new CsTeams:g_iTeam[MAX_PLAYERS + 1];
 new bool:g_bAlive[MAX_PLAYERS + 1];
 
@@ -49,7 +48,7 @@ new Float:g_flFlashTime[MAX_PLAYERS + 1];
 new g_iAimingAtPlayer[MAX_PLAYERS + 1];
 
 // Constants
-new const g_sEntitiesToRemove[][] =
+new const g_EntityClassesToRemove[][] =
 {
 	"func_bomb_target",
 	"info_bomb_target",
@@ -74,57 +73,59 @@ new const g_sKnifeModel_v[] = "models/v_knife.mdl";
 new const g_sBlank[] = "";
 
 // HNS States
-new g_iHostageEnt;
-new ePluginState:g_eState;
+new g_HostageEntity;
+new HnsPluginStates:g_PluginState;
 new g_iHideTimer;
 new bool:g_bFreezeTime;
 
 new Trie:g_tRoundEndMessages;
-new g_iRegisterSpawn;
+new g_SpawnEntityForward;
 
 public plugin_natives()
 {
 	register_library("hns_main");
 	
-	register_native("hns_changeState", "nativeChangeState", 0);
-	register_native("hns_switchTeams", "nativeSwitchTeams", 0);
+	register_native("hns_change_state", "nativeChangeState", 0);
+	register_native("hns_switch_teams", "nativeSwitchTeams", 0);
 	
-	register_native("hns_setHideKnife", "nativeSetHideKnife", 0);
-	register_native("hns_setHideTimeSound", "nativeSetHideTimeSound", 0);
+	register_native("hns_set_hideknife", "nativeSetHideKnife", 0);
+	register_native("hns_set_hidetimesound", "nativeSetHideTimeSound", 0);
 }
 	
 public plugin_precache() 
 {
-	if (!engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, "func_buyzone")))
+	if (!cs_create_entity("func_buyzone"))
 	{
-		set_fail_state("Unable to create buyzone");
+		set_fail_state("Unable to create func_buyzone entity");
+		return;
 	}
+
+	new const infoMapParametersClass[] = "info_map_parameters";
+	new infoMapParamsEntity = cs_find_ent_by_class(-1, infoMapParametersClass);
 	
-	new sInfoMapParametersEntityClass[] = "info_map_parameters";
-	new iEntity = engfunc(EngFunc_FindEntityByString, -1, "classname", sInfoMapParametersEntityClass);
-	
-	if (!iEntity)
+	if (!infoMapParamsEntity)
 	{
-		iEntity = create_entity(sInfoMapParametersEntityClass);
+		infoMapParamsEntity = cs_create_entity(infoMapParametersClass);
 		
-		if (!pev_valid(iEntity))
+		if (!pev_valid(infoMapParamsEntity))
 		{
-			set_fail_state("Unable to disable buying");
+			set_fail_state("Unable to create info_map_parameters entity");
+			return;
 		}
 		else
 		{
-			DispatchSpawn(iEntity);
+			DispatchSpawn(infoMapParamsEntity);
 		}
 	}
 	
-	if (iEntity)
+	if (infoMapParamsEntity)
 	{
-		DispatchKeyValue(iEntity, "buying", "3");
+		DispatchKeyValue(infoMapParamsEntity, "buying", "3");
 	}
 	
 	create_hostage();
 	
-	g_iRegisterSpawn = register_forward(FM_Spawn, "fwdSpawn", 1);
+	g_SpawnEntityForward = register_forward(FM_Spawn, "fwdSpawn", 1);
 }
 
 public plugin_init()
@@ -132,9 +133,10 @@ public plugin_init()
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
 	register_cvar(PLUGIN_NAME, PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY);
 	
-	if (g_iRegisterSpawn)
+	if (g_SpawnEntityForward)
 	{
-		unregister_forward(FM_Spawn, g_iRegisterSpawn, 1);
+		unregister_forward(FM_Spawn, g_SpawnEntityForward, 1);
+		g_SpawnEntityForward = 0;
 	}
 	
 	g_iStatusText = get_user_msgid("StatusText");
@@ -143,10 +145,10 @@ public plugin_init()
 	register_message(get_user_msgid("ScreenFade"), "messageScreenFade");
 	register_message(get_user_msgid("TextMsg"), "messageTextMsg");
 	
-	new const sPlayer[] = "player";
-	RegisterHam(Ham_Spawn, sPlayer, "fwdHamSpawn", 1);
-	RegisterHam(Ham_Killed, sPlayer, "fwdHamKilled", 0);
-	RegisterHam(Ham_CS_Player_ResetMaxSpeed, sPlayer, "fwdHamResetMaxSpeed", 1);
+	new const playerClass[] = "player";
+	RegisterHam(Ham_Spawn, playerClass, "fwdHamSpawn", 1);
+	RegisterHam(Ham_Killed, playerClass, "fwdHamKilled", 0);
+	RegisterHam(Ham_CS_Player_ResetMaxSpeed, playerClass, "fwdHamResetMaxSpeed", 1);
 	RegisterHam(Ham_Weapon_PrimaryAttack, g_sWeaponKnife, "fwdHamKnifeSlash");
 	RegisterHam(Ham_Item_Deploy, g_sWeaponKnife, "fwdHamDeployKnife", 1);
 	
@@ -164,8 +166,7 @@ public plugin_init()
 		g_iHnsNewRoundForward = 0;
 		log_amx("New round forward could not be created.");
 	}
-	
-	register_forward(FM_Sys_Error,"fwdSysError");
+
 	register_forward(FM_EmitSound, "fwdEmitSound", 0);
 	register_forward(FM_GetGameDescription, "fwdGetGameDescription", 0);
 	register_forward(FM_ClientKill, "fwdClientKill", 0);
@@ -191,8 +192,7 @@ public plugin_init()
 	register_clcmd("say /HNSTimerSound", "cmdHideTimeSound");
 	
 	setSemiclip();
-	g_eState = PUBLIC_MODE;
-	g_iMaxPlayers = get_maxplayers();
+	g_PluginState = HnsState_Public;
 	
 	new const sHidersWinMessage[] = "Hiders Win";
 	g_tRoundEndMessages = TrieCreate();
@@ -203,7 +203,7 @@ public plugin_init()
 
 public plugin_end()
 {
-	g_eState = PUBLIC_MODE;
+	g_PluginState = HnsState_Public;
 	setFreezeTime(0);
 	
 	DestroyForward(g_iHnsStateChangedForward);
@@ -222,32 +222,31 @@ public client_disconnected(id)
 	g_bHideTimeSound[id] = false;
 }
 
-public fwdSysError()
+public fwdSpawn(entity)
 {
-	plugin_end();
-}
-
-public fwdSpawn(iEntity)
-{
-	if (pev_valid(iEntity))
+	if (!pev_valid(entity))
 	{
-		static szClassName[32];
-		pev(iEntity, pev_classname, szClassName, charsmax(szClassName));
-		
-		for (new i = 0; i < sizeof g_sEntitiesToRemove; i++) 		
+		return FMRES_IGNORED;
+	}
+
+	static classname[32];
+	pev(entity, pev_classname, classname, charsmax(classname));
+
+	for (new i = 0; i < sizeof g_EntityClassesToRemove; i++) 		
+	{
+		if (equal(classname, g_EntityClassesToRemove[i]))			
 		{
-			if (equal(szClassName, g_sEntitiesToRemove[i]))			
-			{
-				engfunc(EngFunc_RemoveEntity, iEntity);
-				break;
-			}
+			engfunc(EngFunc_RemoveEntity, entity);
+			break;
 		}
 	}
+
+	return FMRES_IGNORED;
 }
 
 public fwdEmitSound(iEntity, iChannel, const sSample[], Float:fVolume, Float:fAttenuation, iFlags, iPitch)
 {
-	if (1 <= iEntity <= 32 && g_iTeam[iEntity] == CS_TEAM_T && g_eState != KNIFE_MODE && sSample[0] == 'w' && equali(sSample, "weapons/knife_deploy1.wav"))
+	if (1 <= iEntity <= 32 && g_iTeam[iEntity] == CS_TEAM_T && g_PluginState != HnsState_Knife && sSample[0] == 'w' && equali(sSample, "weapons/knife_deploy1.wav"))
 	{
 		return FMRES_SUPERCEDE;
 	}
@@ -282,7 +281,7 @@ public fwdHamSpawn(id)
 	strip_user_weapons(id);
 	give_item(id, g_sWeaponKnife);
 	
-	if (g_iTeam[id] == CS_TEAM_T && g_eState != KNIFE_MODE)
+	if (g_iTeam[id] == CS_TEAM_T && g_PluginState != HnsState_Knife)
 	{
 		new iFlashBangs = get_pcvar_num(hns_flashbangs);
 		new iSmokeGrenades = get_pcvar_num(hns_smokegrenades);
@@ -299,7 +298,7 @@ public fwdHamSpawn(id)
 		}
 	}
 	
-	set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & g_iTeam[id] && g_eState != KNIFE_MODE);
+	set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & g_iTeam[id] && g_PluginState != HnsState_Knife);
 	
 	return HAM_IGNORED;
 }
@@ -339,7 +338,7 @@ public fwdHamKnifeSlash(id)
 
 public fwdHamDeployKnife(iEntity)
 {
-	if (g_eState != KNIFE_MODE)
+	if (g_PluginState != HnsState_Knife)
 	{
 		new iClient = get_ent_data_entity(iEntity, "CBasePlayerItem", "m_pPlayer");
 		updateKnifeWeapon(iClient, iEntity);
@@ -369,7 +368,7 @@ updateKnifeWeapon(const iClient, const iWeaponEntity)
 
 FirstThink()
 {
-	for (new i = 1; i <= g_iMaxPlayers; i++)
+	for (new i = 1; i <= MaxClients; i++)
 	{
 		if (!g_bAlive[i])
 		{
@@ -400,7 +399,7 @@ public fwdPlayerPreThink(const id)
 	static targetId, body;
 	get_user_aiming(id, targetId, body);
 	
-	if (targetId <= 0 || targetId > g_iMaxPlayers || !g_bAlive[targetId] || get_gametime() < g_flFlashTime[id] + 1.5 || (g_bFreezeTime && g_iTeam[id] == CS_TEAM_CT))
+	if (targetId <= 0 || targetId > MaxClients || !g_bAlive[targetId] || get_gametime() < g_flFlashTime[id] + 1.5 || (g_bFreezeTime && g_iTeam[id] == CS_TEAM_CT))
 	{
 		targetId = 0;
 	}
@@ -422,7 +421,7 @@ public fwdPlayerPreThink(const id)
 		g_iAimingAtPlayer[id] = targetId;
 	}
 	
-	for (i = 1; i <= g_iMaxPlayers; i++)
+	for (i = 1; i <= MaxClients; i++)
 	{
 		if (!plrSolid[i] || id == i)
 		{
@@ -443,7 +442,7 @@ public fwdPlayerPostThink(id)
 {
 	static i;
 	
-	for (i = 1; i <= g_iMaxPlayers; i++)
+	for (i = 1; i <= MaxClients; i++)
 	{
 		if (plrRestore[i])
 		{
@@ -526,12 +525,12 @@ public messageScreenFade(iMsgId, iMsgDest, iReceiver)
 
 public messageTextMsg(iMessage, iDest, id)
 {
-	if (g_eState == KNIFE_MODE)
+	if (g_PluginState == HnsState_Knife)
 	{
 		return PLUGIN_HANDLED;
 	}
 	
-	if (g_eState == PUBLIC_MODE)
+	if (g_PluginState == HnsState_Public)
 	{
 		static szMessage[64], szNewMessage[64];
 		get_msg_arg_string(2, szMessage, charsmax(szMessage));
@@ -630,7 +629,7 @@ public eventTeamInfo()
 		
 		g_iTeam[id] = iNewTeam;
 		
-		set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & iNewTeam && g_eState != KNIFE_MODE);
+		set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & iNewTeam && g_PluginState != HnsState_Knife);
 		new iWeaponEntity = cs_get_user_weapon_entity(id);
 		
 		if (cs_get_weapon_id(iWeaponEntity) == CSW_KNIFE)
@@ -673,7 +672,7 @@ public eventNewRound()
 	g_iHideTimer = clamp(get_pcvar_num(hns_hidetime), 0, 60);
 	new bool:bValidModeForHideTime;
 	
-	bValidModeForHideTime = g_eState == PUBLIC_MODE || g_eState == COMPETITIVE_MODE;
+	bValidModeForHideTime = g_PluginState == HnsState_Public || g_PluginState == HnsState_Custom;
 	
 	if (g_iHideTimer && bValidModeForHideTime && bSeekersHavePlayer && bHidersHavePlayer)
 	{
@@ -703,28 +702,28 @@ public eventRoundStart()
 
 public eventCTwin()
 {
-	if (g_eState == PUBLIC_MODE)
+	if (g_PluginState == HnsState_Public)
 	{
 		switchTeams();
 	}
 }
 
-setFreezeTime(iSeconds)
+setFreezeTime(const seconds)
 {
-	if (get_pcvar_num(mp_freezetime) != iSeconds)
+	if (get_pcvar_num(mp_freezetime) != seconds)
 	{
-		set_pcvar_num(mp_freezetime, iSeconds);
+		set_pcvar_num(mp_freezetime, seconds);
 	}
 }
 
 switchTeams()
 {
-	new aPlayers[MAX_PLAYERS], iPlayerCount, i, playerId;
-	get_players(aPlayers, iPlayerCount);
+	new players[MAX_PLAYERS], playerCount, playerId;
+	get_players(players, playerCount);
 	
-	for (; i < iPlayerCount; i++)
+	for (new i = 0; i < playerCount; i++)
 	{
-		playerId = aPlayers[i];
+		playerId = players[i];
 		
 		switch (cs_get_user_team(playerId))
 		{
@@ -838,7 +837,7 @@ public taskRemoveBreakableEntites()
 
 remove_breakables(bool:bInitialRemove)
 {
-	new iEntity = g_iMaxPlayers, Float:fRenderAmt, szProperties[32];
+	new iEntity = MaxClients, Float:fRenderAmt, szProperties[32];
 	
 	while ((iEntity = engfunc(EngFunc_FindEntityByString, iEntity, "classname", g_sClassBreakable)))
 	{
@@ -864,7 +863,7 @@ remove_breakables(bool:bInitialRemove)
 
 restore_breakables()
 {
-	new iEntity = g_iMaxPlayers, szProperties[32], szRenderMode[4], szRenderAmt[16], szSolid[4];
+	new iEntity = MaxClients, szProperties[32], szRenderMode[4], szRenderAmt[16], szSolid[4];
 	
 	while ((iEntity = engfunc(EngFunc_FindEntityByString, iEntity, "classname", g_sClassBreakable)))
 	{
@@ -889,55 +888,54 @@ restore_breakables()
 
 create_hostage()
 {
-	g_iHostageEnt = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, "hostage_entity"));
+	g_HostageEntity = cs_create_entity("hostage_entity");
 	
-	if (!pev_valid(g_iHostageEnt))
+	if (!is_valid_ent(g_HostageEntity))
 	{
 		set_fail_state("Unable to create hostage");
-	}
-	
-	engfunc(EngFunc_SetOrigin, g_iHostageEnt, Float:{ 0.0, 0.0, -55000.0 });
-	engfunc(EngFunc_SetSize, g_iHostageEnt, Float:{ -1.0, -1.0, -1.0 }, Float:{ 1.0, 1.0, 1.0 });
-	dllfunc(DLLFunc_Spawn, g_iHostageEnt);
+		return;
+	}	
+
+	engfunc(EngFunc_SetOrigin, g_HostageEntity, Float:{ 0.0, 0.0, -55000.0 });
+	engfunc(EngFunc_SetSize, g_HostageEntity, Float:{ -1.0, -1.0, -1.0 }, Float:{ 1.0, 1.0, 1.0 });
+	dllfunc(DLLFunc_Spawn, g_HostageEntity);
 }
 
 remove_hostage()
 {
-	if (pev_valid(g_iHostageEnt))
+	if (is_valid_ent(g_HostageEntity))
 	{
-		engfunc(EngFunc_RemoveEntity, g_iHostageEnt);
-		g_iHostageEnt = 0;
+		engfunc(EngFunc_RemoveEntity, g_HostageEntity);
+		g_HostageEntity = 0;
 	}
 }
 
-public nativeChangeState(const iPlugin, const iParams)
+public nativeChangeState(const plugin, const params)
 {
-	if (iParams != 1)
+	if (params != 1)
 	{
 		return PLUGIN_CONTINUE;
 	}
 
-	new ePluginState:eNewState = ePluginState:get_param(1);
+	new HnsPluginStates:newState = HnsPluginStates:get_param(1);
 
-	if (g_eState == eNewState)
+	if (g_PluginState == newState)
 	{
 		return PLUGIN_HANDLED;
 	}
 	
-	if (eNewState == DEATHMATCH_MODE)
+	if (newState == HnsState_DeathMatch)
 	{
 		remove_hostage();
 	}
-	else if (g_eState == DEATHMATCH_MODE)
+	else if (g_PluginState == HnsState_DeathMatch)
 	{
 		create_hostage();
 	}
 	
-	g_eState = eNewState;
+	g_PluginState = newState;
 	
-	
-	new iReturn;
-	if (!ExecuteForward(g_iHnsStateChangedForward, iReturn, eNewState))
+	if (!ExecuteForward(g_iHnsStateChangedForward, _, newState))
 	{
 		log_amx("Could not execute state change forward");
 	}
@@ -951,30 +949,30 @@ public nativeSwitchTeams()
 	return PLUGIN_HANDLED;
 }
 
-public nativeSetHideKnife(const iPlugin, const iParams)
+public nativeSetHideKnife(const plugin, const params)
 {
-	if (iParams != 2)
+	if (params != 2)
 	{
 		return PLUGIN_CONTINUE;
 	}
 
 	new id = get_param(1);
-	new bool:bValue = bool:get_param(2);
+	new bool:value = bool:get_param(2);
 
-	setHideKnife(id, bValue);
+	setHideKnife(id, value);
 	return PLUGIN_HANDLED;
 }
 
-public nativeSetHideTimeSound(const iPlugin, const iParams)
+public nativeSetHideTimeSound(const plugin, const params)
 {
-	if (iParams != 2)
+	if (params != 2)
 	{
 		return PLUGIN_CONTINUE;
 	}
 
 	new id = get_param(1);
-	new bool:bValue = bool:get_param(2);
+	new bool:value = bool:get_param(2);
 
-	setHideTimeSound(id, bValue);
+	setHideTimeSound(id, value);
 	return PLUGIN_HANDLED;
 }

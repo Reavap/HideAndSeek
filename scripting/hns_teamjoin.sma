@@ -11,6 +11,8 @@
 #pragma semicolon	1
 
 #define blockTeamJoining() (g_MixState != MixState_Inactive)
+#define transferMenuCanBeUsed() (g_MixState != MixState_Inactive)
+#define isValidTeamTransfer(%1,%2) ((%1 == CS_TEAM_CT || %1 == CS_TEAM_T) != (%2 == CS_TEAM_CT || %2 == CS_TEAM_T) && %1 != CS_TEAM_UNASSIGNED)
 
 new const g_JoinTeamCmd[] = "jointeam";
 new const g_JoinClassCmd[] = "joinclass";
@@ -204,7 +206,7 @@ public nativeTransferAllPlayers(const iPlugin, const iParams)
 
 	new CsTeams:team = CsTeams:get_param(1);
 
-	if (team)
+	if (team == CS_TEAM_UNASSIGNED)
 	{
 		return PLUGIN_HANDLED;
 	}
