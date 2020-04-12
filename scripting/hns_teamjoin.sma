@@ -17,6 +17,9 @@
 new const g_JoinTeamCmd[] = "jointeam";
 new const g_JoinClassCmd[] = "joinclass";
 
+new const g_ClassBasePlayer[] = "CBasePlayer";
+new const g_MemberTeamChanged[] = "m_bTeamChanged";
+
 new const g_TeamSelectMenus[][] =
 {
 	"#Team_Select",
@@ -166,12 +169,13 @@ instantPlayerTransfer(const id, const CsTeams:newTeam)
 	{
 		user_silentkill(id, 1);
 	}
-	
-	set_ent_data(id, "CBasePlayer", "m_bTeamChanged", false);
+
+	set_ent_data(id, g_ClassBasePlayer, g_MemberTeamChanged, false);
 	set_msg_block(g_ShowMenuMessageId, BLOCK_SET);
 	
 	if (currentTeam == CS_TEAM_UNASSIGNED && newTeam == CS_TEAM_SPECTATOR)
 	{
+		set_ent_data(id, g_ClassBasePlayer, "m_iNumSpawns", 1);
 		engclient_cmd(id, g_JoinTeamCmd, "5");
 		engclient_cmd(id, g_JoinClassCmd, "5");
 	}
@@ -193,8 +197,9 @@ instantPlayerTransfer(const id, const CsTeams:newTeam)
 			engclient_cmd(id, g_JoinClassCmd, "5");
 		}
 	}
-	
+
 	set_msg_block(g_ShowMenuMessageId, BLOCK_NOT);
+	set_ent_data(id, g_ClassBasePlayer, g_MemberTeamChanged, false);
 }
 
 public nativeTransferAllPlayers(const iPlugin, const iParams)
