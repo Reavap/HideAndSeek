@@ -122,7 +122,7 @@ changeOptOutStatus(const id, bool:optOut)
 
 	if (g_OptOutOfMixParticipation[id] == optOut)
 	{
-		client_print_color(id, print_team_grey, "^3Your mix participation state did not change", userName);
+		client_print_color(id, print_team_grey, "^3Your mix participation state did not change");
 		return;
 	}
 
@@ -230,7 +230,7 @@ public replaceMenuHandler(const id, const menu, const item)
 	if (selectedPlayerId && validReplaceBetweenPlayers(id, selectedPlayerId))
 	{
 		new userame[MAX_NAME_LENGTH];
-		get_user_name(id, userame, charsmax(userame));
+		get_user_name(selectedPlayerId, userame, charsmax(userame));
 		client_print_color(id, print_team_grey, "Sent replace request to ^3%s", userame);
 		
 		displayReplaceRequestMenu(selectedPlayerId, id);
@@ -268,7 +268,7 @@ displayReplaceRequestMenu(const id, const replaceWithClient)
 	
 	menu_additem(menu, "Accept", userid, 0);
 	menu_additem(menu, "Reject", userid, 0);
-	menu_setprop(menu, MEXIT_NEVER);
+	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER);
 	menu_display(id, menu, 0, 10);
 }
 
@@ -276,14 +276,8 @@ public replaceRequestMenuHandler(const id, const menu, const item)
 {
 	new selectedPlayerId = menu_selected_clientid(menu, 0);
 	menu_destroy(menu);
-	
-	if (item == MENU_TIMEOUT)
-	{
-		client_print_color(selectedPlayerId, print_team_red, "Replace request timed out");
-		return PLUGIN_HANDLED;
-	}
 
-	if (!canExecuteReplace(selectedPlayerId) || !validReplaceBetweenPlayers(selectedPlayerId, id))
+	if (item == MENU_TIMEOUT || !canExecuteReplace(selectedPlayerId) || !validReplaceBetweenPlayers(selectedPlayerId, id))
 	{
 		return PLUGIN_HANDLED;
 	}
@@ -292,6 +286,7 @@ public replaceRequestMenuHandler(const id, const menu, const item)
 	{
 		new username[MAX_NAME_LENGTH];
 		get_user_name(id, username, charsmax(username));
+
 		client_print_color(selectedPlayerId, print_team_red, "^3%s rejected your replace request", username);
 		
 		return PLUGIN_HANDLED;

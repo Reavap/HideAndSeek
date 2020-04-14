@@ -202,9 +202,9 @@ instantPlayerTransfer(const id, const CsTeams:newTeam)
 	set_ent_data(id, g_ClassBasePlayer, g_MemberTeamChanged, false);
 }
 
-public nativeTransferAllPlayers(const iPlugin, const iParams)
+public nativeTransferAllPlayers(const plugin, const params)
 {
-	if (iParams != 1)
+	if (params != 1)
 	{
 		return PLUGIN_CONTINUE;
 	}
@@ -228,9 +228,9 @@ public nativeTransferAllPlayers(const iPlugin, const iParams)
 	return PLUGIN_HANDLED;
 }
 
-public nativeTransferPlayer(const iPlugin, const iParams)
+public nativeTransferPlayer(const plugin, const params)
 {
-	if (iParams != 2)
+	if (params != 2)
 	{
 		return PLUGIN_CONTINUE;
 	}
@@ -243,9 +243,9 @@ public nativeTransferPlayer(const iPlugin, const iParams)
 	return PLUGIN_HANDLED;
 }
 
-public nativeSwapPlayers(const iPlugin, const iParams)
+public nativeSwapPlayers(const plugin, const params)
 {
-	if (iParams != 2)
+	if (params != 2)
 	{
 		return PLUGIN_CONTINUE;
 	}

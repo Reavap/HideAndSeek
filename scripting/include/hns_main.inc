@@ -13,6 +13,8 @@ enum HnsPluginStates (+= 1)
 	HnsState_Custom
 }
 
+forward HNS_StateChanged(const HnsPluginStates:newState);
+
 native hns_switch_teams();
 native hns_change_state(HnsPluginStates:newState);
 

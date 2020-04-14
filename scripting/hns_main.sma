@@ -27,25 +27,24 @@ new hns_footsteps;
 new mp_freezetime;
 
 // Messages
-new g_iStatusText;
-new g_iStatusValue;
+new g_StatusTextMessageId;
+new g_StatusValueMessageId;
 
 // Forwards
 new g_iHnsStateChangedForward;
-new g_iHnsNewRoundForward;
 
 // Players states
-new CsTeams:g_iTeam[MAX_PLAYERS + 1];
-new bool:g_bAlive[MAX_PLAYERS + 1];
+new CsTeams:g_Team[MAX_PLAYERS + 1];
+new bool:g_Alive[MAX_PLAYERS + 1];
 
-new bool:g_bHideKnife[MAX_PLAYERS + 1];
-new bool:g_bHideTimeSound[MAX_PLAYERS + 1];
+new bool:g_HideKnife[MAX_PLAYERS + 1];
+new bool:g_HideTimeCountDownSound[MAX_PLAYERS + 1];
 
 new bool:plrSolid[MAX_PLAYERS + 1];
 new bool:plrRestore[MAX_PLAYERS + 1];
 
-new Float:g_flFlashTime[MAX_PLAYERS + 1];
-new g_iAimingAtPlayer[MAX_PLAYERS + 1];
+new Float:g_FlashTime[MAX_PLAYERS + 1];
+new g_AimingAtPlayer[MAX_PLAYERS + 1];
 
 // Constants
 new const g_EntityClassesToRemove[][] =
@@ -63,22 +62,21 @@ new const g_EntityClassesToRemove[][] =
 	"monster_scientist"
 };
 
-new const g_sClassBasePlayerWeapon[] = "CBasePlayerWeapon";
-new const g_sMemberNextPrimaryAttack[] = "m_flNextPrimaryAttack";
-new const g_sMemberNextSecondaryAttack[] = "m_flNextSecondaryAttack";
+new const g_ClassBasePlayerWeapon[] = "CBasePlayerWeapon";
+new const g_MemberNextPrimaryAttack[] = "m_flNextPrimaryAttack";
+new const g_MemberNextSecondaryAttack[] = "m_flNextSecondaryAttack";
 
-new const g_sWeaponKnife[] = "weapon_knife";
-new const g_sClassBreakable[] = "func_breakable";
-new const g_sKnifeModel_v[] = "models/v_knife.mdl";
-new const g_sBlank[] = "";
+new const g_WeaponKnife[] = "weapon_knife";
+new const g_BreakableClass[] = "func_breakable";
+new const g_KnifeModel_v[] = "models/v_knife.mdl";
+new const g_EmptyString[] = "";
 
 // HNS States
 new g_HostageEntity;
 new HnsPluginStates:g_PluginState;
-new g_iHideTimer;
-new bool:g_bFreezeTime;
+new g_HideTimeCounter;
 
-new Trie:g_tRoundEndMessages;
+new Trie:g_RoundEndMessageLookup;
 new g_SpawnEntityForward;
 
 public plugin_natives()
@@ -101,7 +99,7 @@ public plugin_precache()
 	}
 
 	new const infoMapParametersClass[] = "info_map_parameters";
-	new infoMapParamsEntity = cs_find_ent_by_class(-1, infoMapParametersClass);
+	new infoMapParamsEntity = cs_find_ent_by_class(MaxClients, infoMapParametersClass);
 	
 	if (!infoMapParamsEntity)
 	{
@@ -139,8 +137,8 @@ public plugin_init()
 		g_SpawnEntityForward = 0;
 	}
 	
-	g_iStatusText = get_user_msgid("StatusText");
-	g_iStatusValue = get_user_msgid("StatusValue");
+	g_StatusTextMessageId = get_user_msgid("StatusText");
+	g_StatusValueMessageId = get_user_msgid("StatusValue");
 	
 	register_message(get_user_msgid("ScreenFade"), "messageScreenFade");
 	register_message(get_user_msgid("TextMsg"), "messageTextMsg");
@@ -149,24 +147,11 @@ public plugin_init()
 	RegisterHam(Ham_Spawn, playerClass, "fwdHamSpawn", 1);
 	RegisterHam(Ham_Killed, playerClass, "fwdHamKilled", 0);
 	RegisterHam(Ham_CS_Player_ResetMaxSpeed, playerClass, "fwdHamResetMaxSpeed", 1);
-	RegisterHam(Ham_Weapon_PrimaryAttack, g_sWeaponKnife, "fwdHamKnifeSlash");
-	RegisterHam(Ham_Item_Deploy, g_sWeaponKnife, "fwdHamDeployKnife", 1);
+	RegisterHam(Ham_Weapon_PrimaryAttack, g_WeaponKnife, "fwdHamKnifeSlash");
+	RegisterHam(Ham_Item_Deploy, g_WeaponKnife, "fwdHamDeployKnife", 1);
 	
 	g_iHnsStateChangedForward = CreateMultiForward("HNS_StateChanged", ET_IGNORE, FP_CELL);
-	g_iHnsNewRoundForward = CreateMultiForward("HNS_NewRound", ET_IGNORE);
 	
-	if (g_iHnsStateChangedForward < 0)
-	{
-		g_iHnsStateChangedForward = 0;
-		log_amx("State change forward could not be created.");
-	}
-	
-	if (g_iHnsNewRoundForward < 0)
-	{
-		g_iHnsNewRoundForward = 0;
-		log_amx("New round forward could not be created.");
-	}
-
 	register_forward(FM_EmitSound, "fwdEmitSound", 0);
 	register_forward(FM_GetGameDescription, "fwdGetGameDescription", 0);
 	register_forward(FM_ClientKill, "fwdClientKill", 0);
@@ -194,11 +179,17 @@ public plugin_init()
 	setSemiclip();
 	g_PluginState = HnsState_Public;
 	
-	new const sHidersWinMessage[] = "Hiders Win";
-	g_tRoundEndMessages = TrieCreate();
-	TrieSetString(g_tRoundEndMessages, "#Hostages_Not_Rescued", sHidersWinMessage);
-	TrieSetString(g_tRoundEndMessages, "#Terrorists_Win", sHidersWinMessage);
-	TrieSetString(g_tRoundEndMessages, "#CTs_Win", "Seekers Win");
+	new const hidersWinMessage[] = "Hiders Win";
+	g_RoundEndMessageLookup = TrieCreate();
+	TrieSetString(g_RoundEndMessageLookup, "#Hostages_Not_Rescued", hidersWinMessage);
+	TrieSetString(g_RoundEndMessageLookup, "#Terrorists_Win", hidersWinMessage);
+	TrieSetString(g_RoundEndMessageLookup, "#CTs_Win", "Seekers Win");
+
+	if (g_iHnsStateChangedForward < 0)
+	{
+		g_iHnsStateChangedForward = 0;
+		log_amx("State change forward could not be created.");
+	}
 }
 
 public plugin_end()
@@ -208,18 +199,15 @@ public plugin_end()
 	
 	DestroyForward(g_iHnsStateChangedForward);
 	g_iHnsStateChangedForward = 0;
-	
-	DestroyForward(g_iHnsNewRoundForward);
-	g_iHnsNewRoundForward = 0;
 }
 
 public client_disconnected(id)
 {
-	g_bAlive[id] = false;
-	g_iTeam[id] = CS_TEAM_UNASSIGNED;
+	g_Alive[id] = false;
+	g_Team[id] = CS_TEAM_UNASSIGNED;
 	
-	g_bHideKnife[id] = false;
-	g_bHideTimeSound[id] = false;
+	g_HideKnife[id] = false;
+	g_HideTimeCountDownSound[id] = false;
 }
 
 public fwdSpawn(entity)
@@ -244,9 +232,9 @@ public fwdSpawn(entity)
 	return FMRES_IGNORED;
 }
 
-public fwdEmitSound(iEntity, iChannel, const sSample[], Float:fVolume, Float:fAttenuation, iFlags, iPitch)
+public fwdEmitSound(entity, channel, const sample[], Float:volume, Float:attenuation, flags, pitch)
 {
-	if (1 <= iEntity <= 32 && g_iTeam[iEntity] == CS_TEAM_T && g_PluginState != HnsState_Knife && sSample[0] == 'w' && equali(sSample, "weapons/knife_deploy1.wav"))
+	if (1 <= entity <= MaxClients && g_Team[entity] == CS_TEAM_T && g_PluginState != HnsState_Knife && sample[0] == 'w' && equali(sample, "weapons/knife_deploy1.wav"))
 	{
 		return FMRES_SUPERCEDE;
 	}
@@ -272,56 +260,61 @@ public fwdHamSpawn(id)
 		return HAM_IGNORED;
 	}
 
-	g_bAlive[id] = true;
-	g_iTeam[id] = cs_get_user_team(id);
+	g_Alive[id] = true;
+	g_Team[id] = cs_get_user_team(id);
 	
-	g_flFlashTime[id] = 0.0;
-	g_iAimingAtPlayer[id] = 0;
+	g_FlashTime[id] = 0.0;
+	g_AimingAtPlayer[id] = -1;
 	
 	strip_user_weapons(id);
-	give_item(id, g_sWeaponKnife);
+	give_item(id, g_WeaponKnife);
 	
-	if (g_iTeam[id] == CS_TEAM_T && g_PluginState != HnsState_Knife)
+	if (g_Team[id] == CS_TEAM_T && g_PluginState != HnsState_Knife)
 	{
-		new iFlashBangs = get_pcvar_num(hns_flashbangs);
-		new iSmokeGrenades = get_pcvar_num(hns_smokegrenades);
+		new const flashbangs = get_pcvar_num(hns_flashbangs);
+		new const smokegrenades = get_pcvar_num(hns_smokegrenades);
 		
-		if (iFlashBangs > 0)
+		if (flashbangs > 0)
 		{
 			give_item(id, "weapon_flashbang");
-			cs_set_user_bpammo(id, CSW_FLASHBANG, iFlashBangs);
+			cs_set_user_bpammo(id, CSW_FLASHBANG, flashbangs);
 		}
-		if (iSmokeGrenades > 0)
+		if (smokegrenades > 0)
 		{
 			give_item(id, "weapon_smokegrenade");
-			cs_set_user_bpammo(id, CSW_SMOKEGRENADE, iSmokeGrenades);
+			cs_set_user_bpammo(id, CSW_SMOKEGRENADE, smokegrenades);
 		}
 	}
 	
-	set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & g_iTeam[id] && g_PluginState != HnsState_Knife);
+	setUserFootsteps(id);
 	
 	return HAM_IGNORED;
 }
 
-public fwdHamKilled(iVictim, iAttacker, bShouldGib)
+setUserFootsteps(const id)
 {
-	g_bAlive[iVictim] = false;
+	set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & g_Team[id] && g_PluginState != HnsState_Knife);
+}
+
+public fwdHamKilled(victim, attacker, shouldGib)
+{
+	g_Alive[victim] = false;
 	return HAM_IGNORED;
 }
 
 public fwdHamResetMaxSpeed(id)
 {
-	new Float:flMaxSpeed;
-	pev(id, pev_maxspeed, flMaxSpeed);
+	new Float:maxspeed;
+	pev(id, pev_maxspeed, maxspeed);
 	
-	fwdSetClientMaxSpeed(id, flMaxSpeed);
+	fwdSetClientMaxSpeed(id, maxspeed);
 	
 	return HAM_IGNORED;
 }
 
-public fwdSetClientMaxSpeed(id, Float:flMaxSpeed)
+public fwdSetClientMaxSpeed(id, Float:maxspeed)
 {
-	if (g_bFreezeTime && flMaxSpeed == 1.0 && g_iTeam[id] == CS_TEAM_T)
+	if (g_HideTimeCounter && maxspeed == 1.0 && g_Team[id] == CS_TEAM_T)
 	{
 		set_pev(id, pev_maxspeed, 250.0);
 		return FMRES_HANDLED;
@@ -336,33 +329,33 @@ public fwdHamKnifeSlash(id)
 	return HAM_SUPERCEDE;
 }
 
-public fwdHamDeployKnife(iEntity)
+public fwdHamDeployKnife(entity)
 {
 	if (g_PluginState != HnsState_Knife)
 	{
-		new iClient = get_ent_data_entity(iEntity, "CBasePlayerItem", "m_pPlayer");
-		updateKnifeWeapon(iClient, iEntity);
+		new client = get_ent_data_entity(entity, "CBasePlayerItem", "m_pPlayer");
+		updateKnifeWeapon(client, entity);
 	}
 	
 	return HAM_IGNORED;
 }
 
-updateKnifeWeapon(const iClient, const iWeaponEntity)
+updateKnifeWeapon(const client, const weaponEntity)
 {
-	if (g_iTeam[iClient] == CS_TEAM_CT && get_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack) > 60.0)
+	if (g_Team[client] == CS_TEAM_CT && get_ent_data_float(weaponEntity, g_ClassBasePlayerWeapon, g_MemberNextPrimaryAttack) > 60.0)
 	{
-		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack, 0.0);
-		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextSecondaryAttack, 0.0);
+		set_ent_data_float(weaponEntity, g_ClassBasePlayerWeapon, g_MemberNextPrimaryAttack, 0.0);
+		set_ent_data_float(weaponEntity, g_ClassBasePlayerWeapon, g_MemberNextSecondaryAttack, 0.0);
 	}
-	else if (g_iTeam[iClient] == CS_TEAM_T)
+	else if (g_Team[client] == CS_TEAM_T)
 	{
-		if (g_bHideKnife[iClient])
+		if (g_HideKnife[client])
 		{
-			set_pev(iClient, pev_viewmodel2, g_sBlank);
+			set_pev(client, pev_viewmodel2, g_EmptyString);
 		}
 		
-		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextPrimaryAttack, 9999.0);
-		set_ent_data_float(iWeaponEntity, g_sClassBasePlayerWeapon, g_sMemberNextSecondaryAttack, 9999.0);
+		set_ent_data_float(weaponEntity, g_ClassBasePlayerWeapon, g_MemberNextPrimaryAttack, 9999.0);
+		set_ent_data_float(weaponEntity, g_ClassBasePlayerWeapon, g_MemberNextSecondaryAttack, 9999.0);
 	}
 }
 
@@ -370,7 +363,7 @@ FirstThink()
 {
 	for (new i = 1; i <= MaxClients; i++)
 	{
-		if (!g_bAlive[i])
+		if (!g_Alive[i])
 		{
 			plrSolid[i] = false;
 			continue;
@@ -399,26 +392,26 @@ public fwdPlayerPreThink(const id)
 	static targetId, body;
 	get_user_aiming(id, targetId, body);
 	
-	if (targetId <= 0 || targetId > MaxClients || !g_bAlive[targetId] || get_gametime() < g_flFlashTime[id] + 1.5 || (g_bFreezeTime && g_iTeam[id] == CS_TEAM_CT))
+	if (targetId <= 0 || targetId > MaxClients || !g_Alive[targetId] || get_gametime() < g_FlashTime[id] + 1.5 || (g_HideTimeCounter && g_Team[id] == CS_TEAM_CT))
 	{
 		targetId = 0;
 	}
 	
-	if (g_iAimingAtPlayer[id] != targetId)
+	if (g_AimingAtPlayer[id] != targetId)
 	{
-		static szMsg[64];
+		static statusText[64];
 		
 		if (!targetId)
 		{
-			printStatusText(id, 0, g_sBlank);
+			printStatusText(id, 0, g_EmptyString);
 		}
 		else
 		{
-			formatex(szMsg, charsmax(szMsg), "%%c1: %%p2");
-			printStatusText(id, targetId, szMsg);
+			formatex(statusText, charsmax(statusText), "%%c1: %%p2");
+			printStatusText(id, targetId, statusText);
 		}
 		
-		g_iAimingAtPlayer[id] = targetId;
+		g_AimingAtPlayer[id] = targetId;
 	}
 	
 	for (i = 1; i <= MaxClients; i++)
@@ -428,7 +421,7 @@ public fwdPlayerPreThink(const id)
 			continue;
 		}
 		
-		if (g_iTeam[i] == g_iTeam[id])
+		if (g_Team[i] == g_Team[id])
 		{
 			set_pev(i, pev_solid, SOLID_NOT);
 			plrRestore[i] = true;
@@ -456,12 +449,12 @@ public fwdPlayerPostThink(id)
 
 public fwdAddToFullPackPost(es, e, ent, host, hostflags, player, pSet)
 {
-	if (player && g_bAlive[host] && g_bAlive[ent])
+	if (player && g_Alive[host] && g_Alive[ent])
 	{
 		static Float:flDistance;
 		flDistance = entity_range(host, ent);
 		
-		if (plrSolid[host] && plrSolid[ent] && g_iTeam[host] == g_iTeam[ent] && flDistance < 512.0)
+		if (plrSolid[host] && plrSolid[ent] && g_Team[host] == g_Team[ent] && flDistance < 512.0)
 		{
 			set_es(es, ES_Solid, SOLID_NOT);
 			set_es(es, ES_RenderMode, kRenderTransAlpha);
@@ -474,7 +467,7 @@ public fwdAddToFullPackPost(es, e, ent, host, hostflags, player, pSet)
 
 public fwdAddToFullPackPre(es, e, ent, host, hostflags, player, pSet)
 {
-	if (player && g_bAlive[host] && g_iTeam[host] == CS_TEAM_CT && g_iTeam[ent] == CS_TEAM_T)
+	if (player && g_Alive[host] && g_Team[host] == CS_TEAM_CT && g_Team[ent] == CS_TEAM_T)
 	{
 		forward_return(FMV_CELL, 0);
 		return FMRES_SUPERCEDE;
@@ -483,38 +476,38 @@ public fwdAddToFullPackPre(es, e, ent, host, hostflags, player, pSet)
 	return FMRES_IGNORED;
 }
 
-printStatusText(id, targetId, const sMsg[])
+printStatusText(id, targetId, const message[])
 {
-	message_begin(MSG_ONE_UNRELIABLE, g_iStatusText, _, id);
+	message_begin(MSG_ONE_UNRELIABLE, g_StatusTextMessageId, _, id);
 	write_byte(0);
-	write_string(sMsg);
+	write_string(message);
 	message_end();
 	
 	if (targetId != 0)
 	{
-		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id);
+		message_begin(MSG_ONE_UNRELIABLE, g_StatusValueMessageId, _, id);
 		write_byte(1);
-		write_short(g_iTeam[id] == g_iTeam[targetId] ? 1 : 2);
+		write_short(g_Team[id] == g_Team[targetId] ? 1 : 2);
 		message_end();
 		
-		message_begin(MSG_ONE_UNRELIABLE, g_iStatusValue, _, id);
+		message_begin(MSG_ONE_UNRELIABLE, g_StatusValueMessageId, _, id);
 		write_byte(2);
 		write_short(targetId);
 		message_end();
 	}
 }
 
-public messageScreenFade(iMsgId, iMsgDest, iReceiver)
+public messageScreenFade(messageid, messageDest, receiver)
 {
-	if (!get_pcvar_num(hns_noflash) || g_iTeam[iReceiver] == CS_TEAM_CT)
+	if (!get_pcvar_num(hns_noflash) || g_Team[receiver] == CS_TEAM_CT)
 	{
-		g_flFlashTime[iReceiver] = (get_msg_arg_int(2) / 4096.0) + get_gametime();
+		g_FlashTime[receiver] = (get_msg_arg_int(2) / 4096.0) + get_gametime();
 		return PLUGIN_CONTINUE;
 	}
 	
 	if (get_msg_arg_int(4) == 255 && get_msg_arg_int(5) == 255 && get_msg_arg_int(6) == 255)
 	{
-		if (g_bAlive[iReceiver] || cs_get_user_team(pev(iReceiver, pev_iuser2)) == CS_TEAM_T)
+		if (g_Alive[receiver] || cs_get_user_team(pev(receiver, pev_iuser2)) == CS_TEAM_T)
 		{
 			return PLUGIN_HANDLED;
 		}
@@ -523,7 +516,7 @@ public messageScreenFade(iMsgId, iMsgDest, iReceiver)
 	return PLUGIN_CONTINUE;
 }
 
-public messageTextMsg(iMessage, iDest, id)
+public messageTextMsg(messageid, messageDest, receiver)
 {
 	if (g_PluginState == HnsState_Knife)
 	{
@@ -532,14 +525,12 @@ public messageTextMsg(iMessage, iDest, id)
 	
 	if (g_PluginState == HnsState_Public)
 	{
-		static szMessage[64], szNewMessage[64];
-		get_msg_arg_string(2, szMessage, charsmax(szMessage));
+		static receivedMessage[64], newMessage[64];
+		get_msg_arg_string(2, receivedMessage, charsmax(receivedMessage));
 		
-		if (TrieKeyExists(g_tRoundEndMessages, szMessage))
+		if (TrieGetString(g_RoundEndMessageLookup, receivedMessage, newMessage, charsmax(newMessage)))
 		{
-			TrieGetString(g_tRoundEndMessages, szMessage, szNewMessage, charsmax(szNewMessage));
-			client_print(id, print_center, szNewMessage);
-			
+			client_print(receiver, print_center, newMessage);
 			return PLUGIN_HANDLED;
 		}
 	}
@@ -549,141 +540,114 @@ public messageTextMsg(iMessage, iDest, id)
 
 public cmdHideKnife(id)
 {	
-	setHideKnife(id, !g_bHideKnife[id]);
-	client_print(id, print_chat, "[HNS] Hide knife %s.", g_bHideKnife[id] ? "enabled" : "disabled");
+	setHideKnife(id, !g_HideKnife[id]);
+	client_print(id, print_chat, "[HNS] Hide knife %s.", g_HideKnife[id] ? "enabled" : "disabled");
 	
 	return PLUGIN_HANDLED;
 }
 
 public cmdHideTimeSound(id)
 {
-	nativeSetHideTimeSound(id, !g_bHideTimeSound[id]);
-	client_print(id, print_chat, "[HNS] Hide time sound %s.", g_bHideTimeSound[id] ? "enabled" : "disabled");
+	nativeSetHideTimeSound(id, !g_HideTimeCountDownSound[id]);
+	client_print(id, print_chat, "[HNS] Hide time sound %s.", g_HideTimeCountDownSound[id] ? "enabled" : "disabled");
 	
 	return PLUGIN_HANDLED;
 }
 
-setHideKnife(const id, const bool:bValue)
+setHideKnife(const id, const bool:value)
 {
-	g_bHideKnife[id] = bValue;
+	g_HideKnife[id] = value;
 	
-	if (g_bAlive[id] && get_user_weapon(id) == CSW_KNIFE)
+	if (g_Alive[id] && cs_get_user_weapon(id) == CSW_KNIFE)
 	{
-		if (g_bHideKnife[id] && g_iTeam[id] == CS_TEAM_T)
+		if (g_HideKnife[id] && g_Team[id] == CS_TEAM_T)
 		{
-			set_pev(id, pev_viewmodel2, g_sBlank);
+			set_pev(id, pev_viewmodel2, g_EmptyString);
 		}
 		else
 		{
-			set_pev(id, pev_viewmodel2, g_sKnifeModel_v);
+			set_pev(id, pev_viewmodel2, g_KnifeModel_v);
 		}
 	}
 }
 
-setHideTimeSound(const id, const bool:bValue)
+setHideTimeSound(const id, const bool:value)
 {
-	g_bHideTimeSound[id] = bValue;
+	g_HideTimeCountDownSound[id] = value;
 }
 
 public eventTeamInfo()
 {
 	new id = read_data(1);
 	
-	if (!g_bAlive[id])
+	if (!g_Alive[id])
 	{
 		return;
 	}
 	
-	new szTeam[2];
-	read_data(2, szTeam, charsmax(szTeam));
+	new teamMessageParameter[2];
+	read_data(2, teamMessageParameter, charsmax(teamMessageParameter));
 	
-	new CsTeams:iNewTeam;
+	new CsTeams:newTeam;
 	
-	switch(szTeam[0])
+	switch(teamMessageParameter[0])
 	{
 		case 'C':
 		{
-			iNewTeam = CS_TEAM_CT;
+			newTeam = CS_TEAM_CT;
 		}
 		case 'T':
 		{
-			iNewTeam = CS_TEAM_T;
+			newTeam = CS_TEAM_T;
 		}
 		case 'S':
 		{
-			iNewTeam = CS_TEAM_SPECTATOR;
+			newTeam = CS_TEAM_SPECTATOR;
 		}
 		default:
 		{
-			iNewTeam = CS_TEAM_UNASSIGNED;
+			newTeam = CS_TEAM_UNASSIGNED;
 		}
 	}
 	
-	if (iNewTeam != g_iTeam[id])
+	if (newTeam != g_Team[id])
 	{
-		if (g_iAimingAtPlayer[id])
+		if (g_AimingAtPlayer[id])
 		{
 			// Trick prethink into sending Status update
-			g_iAimingAtPlayer[id] = -1;
+			g_AimingAtPlayer[id] = -1;
 		}
 		
-		g_iTeam[id] = iNewTeam;
+		g_Team[id] = newTeam;
 		
-		set_user_footsteps(id, CsTeams:get_pcvar_num(hns_footsteps) & iNewTeam && g_PluginState != HnsState_Knife);
-		new iWeaponEntity = cs_get_user_weapon_entity(id);
+		setUserFootsteps(id);
+		new weaponEntity = cs_get_user_weapon_entity(id);
 		
-		if (cs_get_weapon_id(iWeaponEntity) == CSW_KNIFE)
+		if (cs_get_weapon_id(weaponEntity) == CSW_KNIFE)
 		{
-			updateKnifeWeapon(id, iWeaponEntity);
+			updateKnifeWeapon(id, weaponEntity);
 		}
 	}
 }
 
 public eventNewRound()
 {
-	new iReturn;
-	if (!ExecuteForward(g_iHnsNewRoundForward, iReturn))
-	{
-		log_amx("Could not execute new round forward");
-	}
+	new const seekerCount = get_playersnum_ex(GetPlayers_ExcludeHLTV | GetPlayers_MatchTeam, "CT");
+	new const hiderCount = get_playersnum_ex(GetPlayers_ExcludeHLTV | GetPlayers_MatchTeam, "TERRORIST");
+
+	g_HideTimeCounter = clamp(get_pcvar_num(hns_hidetime), 0, 60);
 	
+	new const bool:validModeForHideTime = g_PluginState == HnsState_Public || g_PluginState == HnsState_Custom;
 	remove_task(TASKID_HIDETIMER);
-	
-	new aPlayers[MAX_PLAYERS], iPlayerCount, i, playerId, bool:bSeekersHavePlayer, bool:bHidersHavePlayer;
-	get_players(aPlayers, iPlayerCount, "h");
-	
-	for (; i < iPlayerCount; i++)
+
+	if (g_HideTimeCounter && validModeForHideTime && seekerCount && hiderCount)
 	{
-		playerId = aPlayers[i];
-		
-		switch (cs_get_user_team(playerId))
-		{
-			case CS_TEAM_CT:
-			{
-				bSeekersHavePlayer = true;
-			}
-			case CS_TEAM_T:
-			{
-				bHidersHavePlayer = true;
-			}
-		}
-	}
-	
-	g_iHideTimer = clamp(get_pcvar_num(hns_hidetime), 0, 60);
-	new bool:bValidModeForHideTime;
-	
-	bValidModeForHideTime = g_PluginState == HnsState_Public || g_PluginState == HnsState_Custom;
-	
-	if (g_iHideTimer && bValidModeForHideTime && bSeekersHavePlayer && bHidersHavePlayer)
-	{
-		g_bFreezeTime = true;
-		setFreezeTime(g_iHideTimer);
-		set_task(1.0, "taskHideTimer", TASKID_HIDETIMER, _, _, "a", g_iHideTimer - 1);
+		setFreezeTime(g_HideTimeCounter);
+		set_task_ex(1.0, "taskHideTimer", TASKID_HIDETIMER, _, _, SetTask_RepeatTimes, g_HideTimeCounter - 1);
 	}
 	else
 	{
-		g_iHideTimer = 0;
-		g_bFreezeTime = false;
+		g_HideTimeCounter = 0;
 		setFreezeTime(0);
 	}
 	
@@ -696,7 +660,7 @@ public eventNewRound()
 
 public eventRoundStart()
 {
-	g_bFreezeTime = false;
+	g_HideTimeCounter = 0;
 	setHideTimeRenderForward();
 }
 
@@ -741,148 +705,143 @@ switchTeams()
 
 setHideTimeRenderForward()
 {
-	static iAddToFullPackForwardPre;
+	static forwardAddToFullPackPre;
 	
-	if (g_bFreezeTime && !iAddToFullPackForwardPre)
+	if (g_HideTimeCounter && !forwardAddToFullPackPre)
 	{
-		iAddToFullPackForwardPre = register_forward(FM_AddToFullPack, "fwdAddToFullPackPre");
+		forwardAddToFullPackPre = register_forward(FM_AddToFullPack, "fwdAddToFullPackPre");
 	}
-	else if (!g_bFreezeTime && iAddToFullPackForwardPre)
+	else if (!g_HideTimeCounter && forwardAddToFullPackPre)
 	{
-		if (unregister_forward(FM_AddToFullPack, iAddToFullPackForwardPre))
+		if (unregister_forward(FM_AddToFullPack, forwardAddToFullPackPre))
 		{
-			iAddToFullPackForwardPre = 0;
+			forwardAddToFullPackPre = 0;
 		}
 	}
 }
 
 setSemiclip()
 {
-	static bool:bPreviousCvarValue, iPlayerPreThinkForward, iPlayerPostThinkForward, iAddToFullPackForward;
-	new bool:bNewCvarValue = get_pcvar_num(hns_semiclip) == 1;
+	static forwardPlayerPreThink, forwardPlayerPostThink, forwardAddToFullPackPost;
+
+	static bool:previousCvarValue;
+	new const bool:newCvarValue = get_pcvar_bool(hns_semiclip);
 	
-	if (bPreviousCvarValue && !bNewCvarValue)
+	if (previousCvarValue && !newCvarValue)
 	{
-		if (unregister_forward(FM_PlayerPreThink, iPlayerPreThinkForward))
-		{
-			iPlayerPreThinkForward = 0;
-		}
-		if (unregister_forward(FM_PlayerPostThink, iPlayerPostThinkForward))
-		{
-			iPlayerPostThinkForward = 0;
-		}
-		if (unregister_forward(FM_AddToFullPack, iAddToFullPackForward, 1))
-		{
-			iAddToFullPackForward = 0;
-		}
+		unregister_forward(FM_PlayerPreThink, forwardPlayerPreThink);
+		unregister_forward(FM_PlayerPostThink, forwardPlayerPostThink);
+		unregister_forward(FM_AddToFullPack, forwardAddToFullPackPost, 1);
+
+		forwardPlayerPreThink = 0;
+		forwardPlayerPostThink = 0;
+		forwardAddToFullPackPost = 0;
 		
-		set_msg_block(g_iStatusText, BLOCK_NOT);
-		set_msg_block(g_iStatusValue, BLOCK_NOT);
+		set_msg_block(g_StatusTextMessageId, BLOCK_NOT);
+		set_msg_block(g_StatusValueMessageId, BLOCK_NOT);
 	}
-	else if (!bPreviousCvarValue && bNewCvarValue)
+	else if (!previousCvarValue && newCvarValue)
 	{
-		iPlayerPreThinkForward = register_forward(FM_PlayerPreThink, "fwdPlayerPreThink");
-		iPlayerPostThinkForward = register_forward(FM_PlayerPostThink, "fwdPlayerPostThink");
-		iAddToFullPackForward = register_forward(FM_AddToFullPack, "fwdAddToFullPackPost", 1);
+		forwardPlayerPreThink = register_forward(FM_PlayerPreThink, "fwdPlayerPreThink");
+		forwardPlayerPostThink = register_forward(FM_PlayerPostThink, "fwdPlayerPostThink");
+		forwardAddToFullPackPost = register_forward(FM_AddToFullPack, "fwdAddToFullPackPost", 1);
 		
-		set_msg_block(g_iStatusText, BLOCK_SET);
-		set_msg_block(g_iStatusValue, BLOCK_SET);
+		set_msg_block(g_StatusTextMessageId, BLOCK_SET);
+		set_msg_block(g_StatusValueMessageId, BLOCK_SET);
 	}
 	
-	bPreviousCvarValue = bNewCvarValue;
+	previousCvarValue = newCvarValue;
 }
 
 public taskHideTimer()
 {
-	g_iHideTimer--;
-	
-	if (g_iHideTimer > 10)
+	if (--g_HideTimeCounter > 10)
 	{
 		return;
 	}
 	
-	static szSound[16];
-	num_to_word(g_iHideTimer, szSound, charsmax(szSound));
+	static sound[16];
+	num_to_word(g_HideTimeCounter, sound, charsmax(sound));
 	
-	new aPlayers[MAX_PLAYERS], iPlayerCount, i, playerId;
-	get_players(aPlayers, iPlayerCount, "ach");
+	new players[MAX_PLAYERS], playercount, playerId;
+	get_players_ex(players, playercount, GetPlayers_ExcludeBots | GetPlayers_ExcludeHLTV | GetPlayers_ExcludeDead);
 	
-	for (; i < iPlayerCount; i++)
+	for (new i = 0; i < playercount; i++)
 	{
-		playerId = aPlayers[i];
-		
-		if (g_bHideTimeSound[playerId])
+		playerId = players[i];
+
+		if (g_HideTimeCountDownSound[playerId])
 		{
-			client_cmd(playerId, "spk ^"vox/%s^"", szSound);
+			client_cmd(playerId, "spk ^"vox/%s^"", sound);
 		}
 	}
 }
 
 public taskRemoveBreakableEntites()
 {
-	static bool:bPreviousCvarValue;
-	new bool:bNewCvarValue = get_pcvar_num(hns_removebreakables) == 1;
+	static bool:previousCvarValue;
+	new const bool:newCvarValue = get_pcvar_bool(hns_removebreakables);
 	
-	if (bNewCvarValue)
+	if (newCvarValue)
 	{
-		remove_breakables(bNewCvarValue != bPreviousCvarValue);
+		remove_breakables(newCvarValue != previousCvarValue);
 	}
-	else if (!bNewCvarValue && bPreviousCvarValue)
+	else if (!newCvarValue && previousCvarValue)
 	{
 		restore_breakables();
 	}
 	
-	bPreviousCvarValue = bNewCvarValue;
+	previousCvarValue = newCvarValue;
 }
 
-remove_breakables(bool:bInitialRemove)
+remove_breakables(const bool:initialRemove)
 {
-	new iEntity = MaxClients, Float:fRenderAmt, szProperties[32];
+	new entity = MaxClients, Float:renderAmt, properties[32];
 	
-	while ((iEntity = engfunc(EngFunc_FindEntityByString, iEntity, "classname", g_sClassBreakable)))
+	while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_BreakableClass)))
 	{
-		if (!entity_get_float(iEntity , EV_FL_takedamage))
+		if (!entity_get_float(entity , EV_FL_takedamage))
 		{
 			continue;
 		}
 		
-		if (bInitialRemove)
+		if (initialRemove)
 		{
-			pev(iEntity, pev_renderamt, fRenderAmt);
+			pev(entity, pev_renderamt, renderAmt);
 			
-			formatex(szProperties, charsmax(szProperties), "^"%d^" ^"%f^" ^"%d^"", pev(iEntity, pev_rendermode), fRenderAmt, pev(iEntity, pev_solid));
-			set_pev(iEntity, pev_message, szProperties);
-			set_pev(iEntity, pev_rendermode, kRenderTransAlpha);
-			set_pev(iEntity, pev_renderamt, 0.0);
+			formatex(properties, charsmax(properties), "^"%d^" ^"%f^" ^"%d^"", pev(entity, pev_rendermode), renderAmt, pev(entity, pev_solid));
+			set_pev(entity, pev_message, properties);
+			set_pev(entity, pev_rendermode, kRenderTransAlpha);
+			set_pev(entity, pev_renderamt, 0.0);
 		}
 		
 		// Solid state reset every round
-		set_pev(iEntity, pev_solid, SOLID_NOT);
+		set_pev(entity, pev_solid, SOLID_NOT);
 	}
 }
 
 restore_breakables()
 {
-	new iEntity = MaxClients, szProperties[32], szRenderMode[4], szRenderAmt[16], szSolid[4];
+	new entity = MaxClients, properties[32], rendermode[4], renderAmt[16], solid[4];
 	
-	while ((iEntity = engfunc(EngFunc_FindEntityByString, iEntity, "classname", g_sClassBreakable)))
+	while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_BreakableClass)))
 	{
-		if (!entity_get_float(iEntity , EV_FL_takedamage))
+		if (!entity_get_float(entity , EV_FL_takedamage))
 		{
 			continue;
 		}
 		
-		pev(iEntity, pev_message, szProperties, charsmax(szProperties));
+		pev(entity, pev_message, properties, charsmax(properties));
 		
-		parse(szProperties,\
-		szRenderMode, charsmax(szRenderMode),\
-		szRenderAmt, charsmax(szRenderAmt),\
-		szSolid, charsmax(szSolid));
+		parse(properties,\
+		rendermode, charsmax(rendermode),\
+		renderAmt, charsmax(renderAmt),\
+		solid, charsmax(solid));
 		
-		set_pev(iEntity, pev_rendermode, str_to_num(szRenderMode));
-		set_pev(iEntity, pev_renderamt, str_to_float(szRenderAmt));
-		set_pev(iEntity, pev_solid, str_to_num(szSolid));
-		set_pev(iEntity, pev_message, g_sBlank);
+		set_pev(entity, pev_rendermode, str_to_num(rendermode));
+		set_pev(entity, pev_renderamt, str_to_float(renderAmt));
+		set_pev(entity, pev_solid, str_to_num(solid));
+		set_pev(entity, pev_message, g_EmptyString);
 	}
 }
 
@@ -917,7 +876,7 @@ public nativeChangeState(const plugin, const params)
 		return PLUGIN_CONTINUE;
 	}
 
-	new HnsPluginStates:newState = HnsPluginStates:get_param(1);
+	new const HnsPluginStates:newState = HnsPluginStates:get_param(1);
 
 	if (g_PluginState == newState)
 	{

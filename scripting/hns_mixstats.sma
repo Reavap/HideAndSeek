@@ -67,6 +67,7 @@ public plugin_init()
 	RegisterHam(Ham_Killed, sPlayer, "fwdHamKilled", 0);
 	RegisterHam(Ham_TakeDamage, sPlayer, "fwdHamTakeDamage", 0);
 	
+	register_event("HLTV", "eventNewRound", "a", "1=0", "2=0");
 	register_logevent("eventRoundStart", 2, "1=Round_Start");
 	
 	register_clcmd("say /ps", "cmdPersonalStats");
@@ -154,7 +155,7 @@ public HNS_Mix_RoundCompleted(const CsTeams:iWinner)
 	commitRoundStats();
 }
 
-public HNS_NewRound()
+public eventNewRound()
 {
 	resetRoundStats();
 	

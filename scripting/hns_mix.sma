@@ -96,6 +96,7 @@ public plugin_init()
 	
 	mp_roundtime = get_cvar_pointer("mp_roundtime");
 	
+	register_event("HLTV", "eventNewRound", "a", "1=0", "2=0");
 	register_logevent("eventRoundStart", 2, "1=Round_Start");
 	register_logevent("eventHostage", 6, "3=Hostages_Not_Rescued");
 	register_logevent("eventTwin", 6, "3=Terrorists_Win");
@@ -203,7 +204,7 @@ public HNS_Mix_ParticipationChanged(const id, const bool:optOut)
 // Round start/end events
 // ===============================================
 
-public HNS_NewRound()
+public eventNewRound()
 {
 	remove_task(TASK_COUNTDOWN);
 	g_bStateChanged = false;
