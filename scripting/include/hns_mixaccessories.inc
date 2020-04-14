@@ -1,6 +1,6 @@
-#if defined _hns_mixparticipation_included
+#if defined _hns_mixaccessories_included
   #endinput
 #endif
-#define _hns_mixparticipation_included
+#define _hns_mixaccessories_included
 
 forward HNS_Mix_ParticipationChanged(const id, const bool:optOut)

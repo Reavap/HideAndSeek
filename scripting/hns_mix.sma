@@ -4,7 +4,7 @@
 #include <fakemeta>
 #include <hns_main>
 #include <hns_mix>
-#include <hns_mixparticipation>
+#include <hns_mixaccessories>
 #include <hns_teamjoin>
 
 #pragma semicolon				1

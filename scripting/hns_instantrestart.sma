@@ -34,7 +34,7 @@ public cmdRestart()
 		cs_set_user_deaths(playerId, 0);
 	}
 
-	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_iNumCTWins",0);
+	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_iNumCTWins", 0);
 	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_iNumTerroristWins", 0);
 	set_gamerules_float(g_HalfLifeMultiPlayClass, "m_fTeamCount", get_gametime() + g_RestartDelay);
 	set_gamerules_int(g_HalfLifeMultiPlayClass, "m_bRoundTerminating", true);

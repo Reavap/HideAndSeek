@@ -1,7 +1,3 @@
-#define PLUGIN_NAME			"HNS_MixReplace"
-#define PLUGIN_VERSION		"1.0.0"
-#define PLUGIN_AUTHOR		"Reavap"
-
 #include <amxmodx>
 #include <amxmisc>
 #include <cstrike>
@@ -9,24 +5,47 @@
 #include <hns_teamjoin>
 #include <newmenuextensions>
 
-#pragma semicolon	1
+#pragma semicolon				1
+
+#define PLUGIN_NAME				"HNS_MixAccessories"
+#define PLUGIN_VERSION			"1.0.0"
+#define PLUGIN_AUTHOR			"Reavap"
 
 #define canExecuteReplace(%1) ((g_MixState == MixState_Ongoing && !is_user_alive(id)) || g_MixState == MixState_Paused)
 
-new Float:g_ReplaceCooldown[MAX_PLAYERS + 1];
-new bool:g_OptOutOfMixParticipation[MAX_PLAYERS + 1];
-
 new HnsMixStates:g_MixState;
+new g_MixParticipationChangedForward;
+
+new bool:g_OptOutOfMixParticipation[MAX_PLAYERS + 1];
+new Float:g_ReplaceCooldown[MAX_PLAYERS + 1];
+
 new Trie:g_DisconnectedReplaceCooldownLookup;
 
 public plugin_init()
 {
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
 	register_cvar(PLUGIN_NAME, PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY);
-
+	
+	register_clcmd("say /np", "cmdNoPlay");
+	register_clcmd("say /noplay", "cmdNoPlay");
+	register_clcmd("say /play", "cmdPlay");
 	register_clcmd("say /replace", "cmdReplace");
 
 	g_DisconnectedReplaceCooldownLookup = TrieCreate();
+
+	g_MixParticipationChangedForward = CreateMultiForward("HNS_Mix_ParticipationChanged", ET_IGNORE, FP_CELL);
+	
+	if (g_MixParticipationChangedForward < 0)
+	{
+		g_MixParticipationChangedForward = 0;
+		log_amx("Mix participation changed forward could not be created.");
+	}
+}
+
+public plugin_end()
+{
+	DestroyForward(g_MixParticipationChangedForward);
+	g_MixParticipationChangedForward = 0;
 }
 
 public client_authorized(id)
@@ -69,9 +88,62 @@ public HNS_Mix_StateChanged(const HnsMixStates:newState)
 	}
 }
 
-public HNS_Mix_ParticipationChanged(const id, const bool:optOut)
+public cmdNoPlay(const id)
 {
+	if (g_MixState == MixState_Inactive)
+	{
+		client_print_color(id, print_team_red, "^3Command is only available during mix");
+		return PLUGIN_CONTINUE;
+	}
+	
+	changeOptOutStatus(id, true);
+	return PLUGIN_HANDLED;
+}
+
+public cmdPlay(const id)
+{
+	if (g_MixState == MixState_Inactive)
+	{
+		client_print_color(id, print_team_red, "^3Command is only available during mix");
+		return PLUGIN_CONTINUE;
+	}
+	
+	changeOptOutStatus(id, false);
+	return PLUGIN_HANDLED;
+}
+
+changeOptOutStatus(const id, bool:optOut)
+{
+	if (cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	{
+		client_print_color(id, print_team_red, "^3You must be a spectator to execute this command");
+		return;
+	}
+
+	if (g_OptOutOfMixParticipation[id] == optOut)
+	{
+		client_print_color(id, print_team_grey, "^3Your mix participation state did not change", userName);
+		return;
+	}
+
 	g_OptOutOfMixParticipation[id] = optOut;
+
+	if (!ExecuteForward(g_MixParticipationChangedForward, _, optOut))
+	{
+		log_amx("Could not execute mix participation changed forward");
+	}
+
+	new userName[MAX_NAME_LENGTH];
+	get_user_name(id, userName, charsmax(userName));
+
+	if (optOut)
+	{
+		client_print_color(0, print_team_grey, "^3%s ^1is not participating in the mix", userName);
+	}
+	else
+	{
+		client_print_color(0, print_team_grey, "^3%s ^1is participating in the mix", userName);
+	}
 }
 
 public cmdReplace(const id)
