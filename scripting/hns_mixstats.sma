@@ -10,32 +10,31 @@
 #define PLUGIN_AUTHOR		"Reavap"
 
 #define STEAMID_LEN			33
-#define USERNAME_LEN		33
 #define ASSIST_SLOTS		3
 
-new g_iCompletedRounds;
-new g_iRoundsToPlay;
+new g_CompletedRounds;
+new g_RoundsToPlay;
 
-new bool:g_bFreezeTime;
-new bool:g_bRoundHasEnded;
+new bool:g_FreezeTime;
+new bool:g_RoundHasEnded;
 
-new Float:g_fRoundStart;
-new Float:g_fRoundTime;
+new Float:g_RoundStart;
+new Float:g_RoundTime;
 
-new CsTeams:g_iTeam[MAX_PLAYERS + 1];
-new bool:g_bAlive[MAX_PLAYERS + 1];
+new CsTeams:g_Team[MAX_PLAYERS + 1];
+new bool:g_Alive[MAX_PLAYERS + 1];
 
-new bool:g_bSpawnedThisRound[MAX_PLAYERS + 1];
-new bool:g_bAuthorizeNextRound[MAX_PLAYERS + 1];
+new bool:g_SpawnedThisRound[MAX_PLAYERS + 1];
+new bool:g_AuthorizeNextRound[MAX_PLAYERS + 1];
 
-new g_iKills[MAX_PLAYERS + 1];
-new g_iAssists[MAX_PLAYERS + 1];
-new Float:g_fSurvivedTime[MAX_PLAYERS + 1];
+new g_Kills[MAX_PLAYERS + 1];
+new g_Assists[MAX_PLAYERS + 1];
+new Float:g_SurvivedTime[MAX_PLAYERS + 1];
 
-new g_iAttackers[MAX_PLAYERS + 1][ASSIST_SLOTS];
-new g_sSteamID[MAX_PLAYERS + 1][STEAMID_LEN];
+new g_Attackers[MAX_PLAYERS + 1][ASSIST_SLOTS];
+new g_SteamID[MAX_PLAYERS + 1][STEAMID_LEN];
 
-enum _:ePlayerStats
+enum _:MixPlayerStats
 {
 	Kills,
 	Assists,
@@ -48,24 +47,23 @@ enum _:ePlayerStats
 	bool:TiedTRank
 };
 
-new Trie:g_tStats;
-new Trie:g_tUsernameLookup;
+new Trie:g_Stats;
+new Trie:g_UsernameLookup;
 
-new Array:g_aSeekerTop;
-new Array:g_aHiderTop;
+new Array:g_SeekerToplist;
+new Array:g_HiderToplist;
 
-new const g_iTopListLength = 5;
-new const g_sPluginPrefix[] = "^1[^4Mix Stats^1]";
+new const g_ToplistLength = 5;
 
 public plugin_init()
 {
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
 	register_cvar(PLUGIN_NAME, PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY);
 	
-	new sPlayer[] = "player";
-	RegisterHam(Ham_Spawn, sPlayer, "fwdHamSpawn", 1);
-	RegisterHam(Ham_Killed, sPlayer, "fwdHamKilled", 0);
-	RegisterHam(Ham_TakeDamage, sPlayer, "fwdHamTakeDamage", 0);
+	new playerEntityClass[] = "player";
+	RegisterHam(Ham_Spawn, playerEntityClass, "fwdHamSpawn", 1);
+	RegisterHam(Ham_Killed, playerEntityClass, "fwdHamKilled", 0);
+	RegisterHam(Ham_TakeDamage, playerEntityClass, "fwdHamTakeDamage", 0);
 	
 	register_event("HLTV", "eventNewRound", "a", "1=0", "2=0");
 	register_logevent("eventRoundStart", 2, "1=Round_Start");
@@ -73,81 +71,81 @@ public plugin_init()
 	register_clcmd("say /ps", "cmdPersonalStats");
 	register_clcmd("say /mixtop", "cmdMixTop");
 	
-	g_tStats = TrieCreate();
-	g_tUsernameLookup = TrieCreate();
-	g_aSeekerTop = ArrayCreate(STEAMID_LEN);
-	g_aHiderTop = ArrayCreate(STEAMID_LEN);
+	g_Stats = TrieCreate();
+	g_UsernameLookup = TrieCreate();
+	g_SeekerToplist = ArrayCreate(STEAMID_LEN);
+	g_HiderToplist = ArrayCreate(STEAMID_LEN);
 }
 
 public client_authorized(id)
 {
-	if (g_bSpawnedThisRound[id])
+	if (g_SpawnedThisRound[id])
 	{
 		// Perform authorization later to avoid overwriting stats of a disconnected player
-		g_bAuthorizeNextRound[id] = true;
+		g_AuthorizeNextRound[id] = true;
 	}
 	else
 	{
-		get_user_authid(id, g_sSteamID[id], charsmax(g_sSteamID[]));
+		get_user_authid(id, g_SteamID[id], charsmax(g_SteamID[]));
 	}
 }
 
 public client_disconnected(id)
 {
-	if (g_bSpawnedThisRound[id])
+	if (g_SpawnedThisRound[id])
 	{
-		if (g_bAlive[id] && !g_bRoundHasEnded && g_iTeam[id] == CS_TEAM_T)
+		if (g_Alive[id] && !g_RoundHasEnded && g_Team[id] == CS_TEAM_T)
 		{
-			g_fSurvivedTime[id] = (!g_bFreezeTime ? (get_gametime() - g_fRoundStart) : 0.0);
+			g_SurvivedTime[id] = (!g_FreezeTime ? (get_gametime() - g_RoundStart) : 0.0);
 		}
 		
 		cacheUsername(id);
 	}
 	
-	g_bAlive[id] = false;
-	g_bAuthorizeNextRound[id] = false;
+	g_Alive[id] = false;
+	g_AuthorizeNextRound[id] = false;
 }
 
-public HNS_Mix_Started(const iRoundsToPlay)
+public HNS_Mix_Started(const roundsToPlay)
 {
-	g_iRoundsToPlay = iRoundsToPlay;
+	g_RoundsToPlay = roundsToPlay;
 	
-	TrieClear(g_tStats);
-	TrieClear(g_tUsernameLookup);
+	TrieClear(g_Stats);
+	TrieClear(g_UsernameLookup);
 	
-	ArrayClear(g_aSeekerTop);
-	ArrayClear(g_aHiderTop);
+	ArrayClear(g_SeekerToplist);
+	ArrayClear(g_HiderToplist);
 }
 
 public HNS_Mix_Ended()
 {
-	g_iRoundsToPlay = 0;
-	g_iCompletedRounds = 0;
+	g_RoundsToPlay = 0;
+	g_CompletedRounds = 0;
 }
 
-public HNS_Mix_RoundCompleted(const CsTeams:iWinner)
+public HNS_Mix_RoundCompleted(const CsTeams:winner)
 {
-	g_bRoundHasEnded = true;
-	g_iCompletedRounds++;
+	g_RoundHasEnded = true;
+	g_CompletedRounds++;
 	
-	if (iWinner == CS_TEAM_T)
+	if (winner == CS_TEAM_T)
 	{
-		new Float:fActualRoundTime = (!g_bFreezeTime ? (get_gametime() - g_fRoundStart) : 0.0);
+		new Float:actualRoundTime = (!g_FreezeTime ? (get_gametime() - g_RoundStart) : 0.0);
 
-		for (new i = 1; i <= MAX_PLAYERS; i++)
+		for (new i = 1; i <= MaxClients; i++)
 		{
-			if (!g_bSpawnedThisRound[i] || g_iTeam[i] != CS_TEAM_T)
+			if (!g_SpawnedThisRound[i] || g_Team[i] != CS_TEAM_T)
 			{
 				continue;
 			}
 
-			if (g_bAlive[i])
+			if (g_Alive[i])
 			{
-				g_fSurvivedTime[i] = g_fRoundTime;
+				g_SurvivedTime[i] = g_RoundTime;
 			}	
 			else
 			{
-				g_fSurvivedTime[i] += (g_fRoundTime - fActualRoundTime);
+				g_SurvivedTime[i] += (g_RoundTime - actualRoundTime);
 			}
 		}
 	}
@@ -159,17 +157,17 @@ public eventNewRound()
 {
 	resetRoundStats();
 	
-	g_bFreezeTime = true;
-	g_bRoundHasEnded = false;
+	g_FreezeTime = true;
+	g_RoundHasEnded = false;
 }
 
 public eventRoundStart()
 {
-	g_bFreezeTime = false;
-	g_bRoundHasEnded = false;
+	g_FreezeTime = false;
+	g_RoundHasEnded = false;
 	
-	g_fRoundStart = get_gametime();
-	g_fRoundTime = floatclamp(get_cvar_float("mp_roundtime"), 1.0, 9.0) * 60.0;
+	g_RoundStart = get_gametime();
+	g_RoundTime = floatclamp(get_cvar_float("mp_roundtime"), 1.0, 9.0) * 60.0;
 }
 
 public fwdHamSpawn(id)
@@ -179,38 +177,38 @@ public fwdHamSpawn(id)
 		return HAM_IGNORED;
 	}
 	
-	g_bAlive[id] = true;
-	g_iTeam[id] = cs_get_user_team(id);
-	g_bSpawnedThisRound[id] = g_iRoundsToPlay > 0;
+	g_Alive[id] = true;
+	g_Team[id] = cs_get_user_team(id);
+	g_SpawnedThisRound[id] = g_RoundsToPlay > 0;
 	
 	return HAM_IGNORED;
 }
 
-public fwdHamKilled(iVictim, iAttacker, bShouldGib)
+public fwdHamKilled(victim, attacker, shouldGib)
 {
-	g_bAlive[iVictim] = false;
+	g_Alive[victim] = false;
 	
-	if (!g_bRoundHasEnded && g_iTeam[iVictim] == CS_TEAM_T)
+	if (!g_RoundHasEnded && g_Team[victim] == CS_TEAM_T)
 	{
-		g_fSurvivedTime[iVictim] = !g_bFreezeTime ? (get_gametime() - g_fRoundStart) : 0.0;
+		g_SurvivedTime[victim] = !g_FreezeTime ? (get_gametime() - g_RoundStart) : 0.0;
 		
-		static id;
+		new id;
 		
 		for (new i = 0; i < ASSIST_SLOTS; i++)
 		{
-			id = g_iAttackers[iVictim][i];
+			id = g_Attackers[victim][i];
 			
 			if (!id)
 			{
 				return HAM_IGNORED;
 			}
-			else if (id == iAttacker)
+			else if (id == attacker)
 			{
-				g_iKills[iAttacker]++;
+				g_Kills[attacker]++;
 			}
 			else
 			{
-				g_iAssists[id]++;
+				g_Assists[id]++;
 			}
 		}
 	}
@@ -218,9 +216,9 @@ public fwdHamKilled(iVictim, iAttacker, bShouldGib)
 	return HAM_IGNORED;
 }
 
-public fwdHamTakeDamage(iVictim, inflictor, iAttacker, Float:fDamage, damageBits)
+public fwdHamTakeDamage(victim, inflictor, attacker, Float:damage, damageBits)
 {
-	if (iAttacker < 1 || iAttacker > MAX_PLAYERS || fDamage < 1.0 || g_bRoundHasEnded)
+	if (attacker < 1 || attacker > MaxClients || damage < 1.0 || g_RoundHasEnded)
 	{
 		return HAM_IGNORED;
 	}
@@ -229,96 +227,98 @@ public fwdHamTakeDamage(iVictim, inflictor, iAttacker, Float:fDamage, damageBits
 	
 	for (i = 0; i < ASSIST_SLOTS; i++)
 	{
-		if (g_iAttackers[iVictim][i] == iAttacker)
+		if (g_Attackers[victim][i] == attacker)
 		{
-			if (i < ASSIST_SLOTS - 1 && g_iAttackers[iVictim][i + 1])
+			if (i < ASSIST_SLOTS - 1 && g_Attackers[victim][i + 1])
 			{
-				g_iAttackers[iVictim][i] = g_iAttackers[iVictim][i + 1];
-				g_iAttackers[iVictim][i + 1] = iAttacker;
+				g_Attackers[victim][i] = g_Attackers[victim][i + 1];
+				g_Attackers[victim][i + 1] = attacker;
 			}
 			else
 			{
 				return HAM_IGNORED;
 			}
 		}
-		else if (!g_iAttackers[iVictim][i])
+		else if (!g_Attackers[victim][i])
 		{
-			g_iAttackers[iVictim][i] = iAttacker;
+			g_Attackers[victim][i] = attacker;
 			return HAM_IGNORED;
 		}
 	}
 	
 	for (i = 1; i < ASSIST_SLOTS; i++)
 	{
-		g_iAttackers[iVictim][i - 1] = g_iAttackers[iVictim][i];
+		g_Attackers[victim][i - 1] = g_Attackers[victim][i];
 	}
 	
-	g_iAttackers[iVictim][ASSIST_SLOTS - 1] = iAttacker;
+	g_Attackers[victim][ASSIST_SLOTS - 1] = attacker;
 	
 	return HAM_IGNORED;
 }
 
 resetRoundStats()
 {
-	for (new i = 1; i <= MAX_PLAYERS; i++)
+	new j;
+	
+	for (new i = 1; i <= MaxClients; i++)
 	{
-		g_bSpawnedThisRound[i] = false;
-		g_iKills[i] = 0;
-		g_iAssists[i] = 0;
-		g_fSurvivedTime[i] = 0.0;
+		g_SpawnedThisRound[i] = false;
+		g_Kills[i] = 0;
+		g_Assists[i] = 0;
+		g_SurvivedTime[i] = 0.0;
 		
-		if (g_bAuthorizeNextRound[i])
+		if (g_AuthorizeNextRound[i])
 		{
-			g_bAuthorizeNextRound[i] = false;
-			get_user_authid(i, g_sSteamID[i], charsmax(g_sSteamID[]));
+			g_AuthorizeNextRound[i] = false;
+			get_user_authid(i, g_SteamID[i], charsmax(g_SteamID[]));
 		}
 		
-		for (new j = 0; j < ASSIST_SLOTS; j++)
+		for (j = 0; j < ASSIST_SLOTS; j++)
 		{
-			g_iAttackers[i][j] = 0;
+			g_Attackers[i][j] = 0;
 		}
 	}
 }
 
 commitRoundStats()
 {
-	static eStats[ePlayerStats], szTrieKey[STEAMID_LEN];
+	static stats[MixPlayerStats], trieKey[STEAMID_LEN];
 	
-	for (new i = 1; i <= MAX_PLAYERS; i++)
+	for (new i = 1; i <= MaxClients; i++)
 	{
-		if (!g_bSpawnedThisRound[i])
+		if (!g_SpawnedThisRound[i])
 		{
 			continue;
 		}
 		
-		szTrieKey = g_sSteamID[i];
+		trieKey = g_SteamID[i];
 		
-		if (!TrieKeyExists(g_tStats, szTrieKey))
+		if (!TrieKeyExists(g_Stats, trieKey))
 		{
-			new eDefaultStats[ePlayerStats];
-			TrieSetArray(g_tStats, szTrieKey, eDefaultStats, ePlayerStats);
-			ArrayPushString(g_aSeekerTop, szTrieKey);
-			ArrayPushString(g_aHiderTop, szTrieKey);
+			new defaultStats[MixPlayerStats];
+			TrieSetArray(g_Stats, trieKey, defaultStats, MixPlayerStats);
+			ArrayPushString(g_SeekerToplist, trieKey);
+			ArrayPushString(g_HiderToplist, trieKey);
 			
 			cacheUsername(i);
 		}
 
-		TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		eStats[Kills] += g_iKills[i];
-		eStats[Assists] += g_iAssists[i];
-		eStats[SurvTime] += g_fSurvivedTime[i];
+		stats[Kills] += g_Kills[i];
+		stats[Assists] += g_Assists[i];
+		stats[SurvTime] += g_SurvivedTime[i];
 
-		if (g_iTeam[i] == CS_TEAM_T)
+		if (g_Team[i] == CS_TEAM_T)
 		{
-			eStats[TRounds]++;
+			stats[TRounds]++;
 		}
 		else
 		{
-			eStats[CTRounds]++;
+			stats[CTRounds]++;
 		}
 
-		TrieSetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		TrieSetArray(g_Stats, trieKey, stats, MixPlayerStats);
 	}
 	
 	constructTopLists();
@@ -326,111 +326,111 @@ commitRoundStats()
 
 constructTopLists()
 {
-	ArraySort(g_aSeekerTop, "compareSeekerStats");
-	ArraySort(g_aHiderTop, "compareHiderStats");
+	ArraySort(g_SeekerToplist, "compareSeekerStats");
+	ArraySort(g_HiderToplist, "compareHiderStats");
 	
-	static eStats[ePlayerStats], szTrieKey[STEAMID_LEN];
+	static stats[MixPlayerStats], trieKey[STEAMID_LEN];
 	
-	new iPlayerCount = ArraySize(g_aSeekerTop);
-	new iLastSeekerRank = 1, iLastHiderRank = 1;
+	new playerCount = ArraySize(g_SeekerToplist);
+	new seekerRank = 1, hiderRank = 1;
 	
-	for (new i = 0; i < iPlayerCount; i++)
+	for (new i = 0; i < playerCount; i++)
 	{
 		if (i > 0)
 		{
-			if (compareSeekerStats(g_aSeekerTop, i - 1, i))
+			if (compareSeekerStats(g_SeekerToplist, i - 1, i))
 			{
-				iLastSeekerRank = i + 1;
+				seekerRank = i + 1;
 			}
 			else
 			{
-				ArrayGetString(g_aSeekerTop, i - 1, szTrieKey, charsmax(szTrieKey));
-				TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+				ArrayGetString(g_SeekerToplist, i - 1, trieKey, charsmax(trieKey));
+				TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 				
-				eStats[TiedCTRank] = true;
-				TrieSetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+				stats[TiedCTRank] = true;
+				TrieSetArray(g_Stats, trieKey, stats, MixPlayerStats);
 			}
-			if (compareHiderStats(g_aHiderTop, i - 1, i))
+			if (compareHiderStats(g_HiderToplist, i - 1, i))
 			{
-				iLastHiderRank = i + 1;
+				hiderRank = i + 1;
 			}
 			else
 			{
-				ArrayGetString(g_aHiderTop, i - 1, szTrieKey, charsmax(szTrieKey));
-				TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+				ArrayGetString(g_HiderToplist, i - 1, trieKey, charsmax(trieKey));
+				TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 				
-				eStats[TiedTRank] = true;
-				TrieSetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+				stats[TiedTRank] = true;
+				TrieSetArray(g_Stats, trieKey, stats, MixPlayerStats);
 			}
 		}
 		
-		ArrayGetString(g_aSeekerTop, i, szTrieKey, charsmax(szTrieKey));
-		TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		ArrayGetString(g_SeekerToplist, i, trieKey, charsmax(trieKey));
+		TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		eStats[CTRank] = eStats[CTRounds] > 0 ? iLastSeekerRank : 0;
-		eStats[TiedCTRank] = i > 0 && i >= iLastSeekerRank;
-		TrieSetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		stats[CTRank] = stats[CTRounds] > 0 ? seekerRank : 0;
+		stats[TiedCTRank] = i > 0 && i >= seekerRank;
+		TrieSetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		ArrayGetString(g_aHiderTop, i, szTrieKey, charsmax(szTrieKey));
-		TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		ArrayGetString(g_HiderToplist, i, trieKey, charsmax(trieKey));
+		TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		eStats[TRank] = eStats[TRounds] > 0 ? iLastHiderRank : 0;
-		eStats[TiedTRank] = i > 0 && i >= iLastHiderRank;
-		TrieSetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		stats[TRank] = stats[TRounds] > 0 ? hiderRank : 0;
+		stats[TiedTRank] = i > 0 && i >= hiderRank;
+		TrieSetArray(g_Stats, trieKey, stats, MixPlayerStats);
 	}
 }
 
 cacheUsername(const id)
 {
-	static szUsername[USERNAME_LEN];
-	get_user_name(id, szUsername, charsmax(szUsername));
-	TrieSetString(g_tUsernameLookup, g_sSteamID[id], szUsername);
+	static username[MAX_NAME_LENGTH ];
+	get_user_name(id, username, charsmax(username));
+	TrieSetString(g_UsernameLookup, g_SteamID[id], username);
 }
 
 public cmdPersonalStats(const id)
 {
-	static szTrieKey[STEAMID_LEN], eStats[ePlayerStats], szHiderText[33], szSeekerText[33];
-	szTrieKey = g_sSteamID[id];
+	static trieKey[STEAMID_LEN], stats[MixPlayerStats], hiderText[33], seekerText[33];
+	trieKey = g_SteamID[id];
 	
-	if (g_bAuthorizeNextRound[id] || !TrieKeyExists(g_tStats, szTrieKey))
+	if (g_AuthorizeNextRound[id] || !TrieKeyExists(g_Stats, trieKey))
 	{
-		client_print_color(id, print_team_grey, "%s There exists no saved stats for you yet.", g_sPluginPrefix);
+		client_print_color(id, print_team_grey, "There exists no saved stats for you yet");
 		return PLUGIN_HANDLED;
 	}
 	
-	TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+	TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 	
-	if (eStats[TRounds] > 0)
+	if (stats[TRounds] > 0)
 	{
-		formatex(szHiderText, charsmax(szHiderText), "^3%s ^1(Rank ^4%s%d^1)", survivalTimeAsText(eStats[SurvTime]), (eStats[TiedTRank] ? "T" : ""), eStats[TRank]);
+		formatex(hiderText, charsmax(hiderText), "^3%s ^1(Rank ^4%s%d^1)", survivalTimeAsText(stats[SurvTime]), (stats[TiedTRank] ? "T" : ""), stats[TRank]);
 	}
 	else
 	{
-		formatex(szHiderText, charsmax(szHiderText), "^3N/A^1");
+		formatex(hiderText, charsmax(hiderText), "^3N/A^1");
 	}
 	
-	if (eStats[CTRounds] > 0)
+	if (stats[CTRounds] > 0)
 	{
-		formatex(szSeekerText, charsmax(szHiderText), "^3%d^1/^3%d ^1(Rank ^4%s%d^1)", eStats[Kills], eStats[Assists], (eStats[TiedCTRank] ? "T" : ""), eStats[CTRank]);
+		formatex(seekerText, charsmax(hiderText), "^3%d^1/^3%d ^1(Rank ^4%s%d^1)", stats[Kills], stats[Assists], (stats[TiedCTRank] ? "T" : ""), stats[CTRank]);
 	}
 	else
 	{
-		formatex(szSeekerText, charsmax(szHiderText), "^3N/A^1");
+		formatex(seekerText, charsmax(hiderText), "^3N/A^1");
 	}
 	
-	client_print_color(id, print_team_grey, "%s Survived time: %s | Kills/Assists: %s", g_sPluginPrefix, szHiderText, szSeekerText);
+	client_print_color(id, print_team_grey, "Survived time: %s | Kills/Assists: %s", hiderText, seekerText);
 	
 	return PLUGIN_HANDLED;
 }
 
 public cmdMixTop(const id)
 {
-	static szTrieKey[STEAMID_LEN], eStats[ePlayerStats], szUsername[USERNAME_LEN];
+	static trieKey[STEAMID_LEN], stats[MixPlayerStats], username[MAX_NAME_LENGTH ];
 	
-	new iArraySize = ArraySize(g_aHiderTop);
-	client_print(id, print_console, "===== Top %d Hiders (Survived time) =====", g_iTopListLength);
+	new iArraySize = ArraySize(g_HiderToplist);
+	client_print(id, print_console, "===== Top %d Hiders (Survived time) =====", g_ToplistLength);
 	
-	for (new i = 0; i < g_iTopListLength; i++)
+	for (new i = 0; i < g_ToplistLength; i++)
 	{
 		if (i >= iArraySize)
 		{
@@ -438,24 +438,24 @@ public cmdMixTop(const id)
 			continue;
 		}
 		
-		ArrayGetString(g_aHiderTop, i, szTrieKey, charsmax(szTrieKey));
-		TrieGetString(g_tUsernameLookup, szTrieKey, szUsername, charsmax(szUsername));
-		TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		ArrayGetString(g_HiderToplist, i, trieKey, charsmax(trieKey));
+		TrieGetString(g_UsernameLookup, trieKey, username, charsmax(username));
+		TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		if (eStats[TRounds] == 0)
+		if (stats[TRounds] == 0)
 		{
 			client_print(id, print_console, "%d. - N/A", i + 1);
 		}
 		else
 		{
-			client_print(id, print_console, "%s%d. - %s - %s", (eStats[TiedTRank] ? "T" : ""), eStats[TRank], szUsername, survivalTimeAsText(eStats[SurvTime]));
+			client_print(id, print_console, "%s%d. - %s - %s", (stats[TiedTRank] ? "T" : ""), stats[TRank], username, survivalTimeAsText(stats[SurvTime]));
 		}
 	}
 	
-	iArraySize = ArraySize(g_aSeekerTop);
-	client_print(id, print_console, "===== Top %d Seekers (Kills/Assists) =====", g_iTopListLength);
+	iArraySize = ArraySize(g_SeekerToplist);
+	client_print(id, print_console, "===== Top %d Seekers (Kills/Assists) =====", g_ToplistLength);
 	
-	for (new i = 0; i < g_iTopListLength; i++)
+	for (new i = 0; i < g_ToplistLength; i++)
 	{
 		if (i >= iArraySize)
 		{
@@ -463,96 +463,95 @@ public cmdMixTop(const id)
 			continue;
 		}
 		
-		ArrayGetString(g_aSeekerTop, i, szTrieKey, charsmax(szTrieKey));
-		TrieGetString(g_tUsernameLookup, szTrieKey, szUsername, charsmax(szUsername));
-		TrieGetArray(g_tStats, szTrieKey, eStats, ePlayerStats);
+		ArrayGetString(g_SeekerToplist, i, trieKey, charsmax(trieKey));
+		TrieGetString(g_UsernameLookup, trieKey, username, charsmax(username));
+		TrieGetArray(g_Stats, trieKey, stats, MixPlayerStats);
 		
-		if (eStats[CTRounds] == 0)
+		if (stats[CTRounds] == 0)
 		{
 			client_print(id, print_console, "%d. - N/A", i + 1);
 		}
 		else
 		{
-			client_print(id, print_console, "%s%d. - %s - %d/%d", (eStats[TiedCTRank] ? "T" : ""), eStats[CTRank], szUsername, eStats[Kills], eStats[Assists]);
+			client_print(id, print_console, "%s%d. - %s - %d/%d", (stats[TiedCTRank] ? "T" : ""), stats[CTRank], username, stats[Kills], stats[Assists]);
 		}
 	}
 	
-	client_print_color(id, print_team_grey, "%s Top list has been printed in your console.", g_sPluginPrefix);
+	client_print_color(id, print_team_grey, "Top list has been printed in your console");
 	
 	return PLUGIN_HANDLED;
 }
 
-survivalTimeAsText(const Float:flTime)
+survivalTimeAsText(const Float:time)
 {
-	static szTime[10];
-	new iTime, iMinutes, iSeconds, iMilliSeconds;
+	static timeString[10];
+	new totalSeconds = floatround(time, floatround_floor);
+
+	new minutes = totalSeconds / 60;
+	new seconds = totalSeconds - minutes * 60;
+	new milliseconds = floatround((time - totalSeconds) * 1000.0, floatround_floor);
 	
-	iTime = floatround(flTime, floatround_floor);
-	iMinutes = iTime / 60;
-	iSeconds = iTime - iMinutes * 60;
-	iMilliSeconds = floatround((flTime - iTime) * 1000.0, floatround_floor);
+	formatex(timeString, charsmax(timeString), "%s%d:%s%d.%s%s%d",
+	(minutes < 10 ? "0" : ""), minutes,
+	(seconds < 10 ? "0" : ""), seconds,
+	(milliseconds < 100 ? "0" : ""),
+	(milliseconds < 10 ? "0" : ""), milliseconds);
 	
-	formatex(szTime, charsmax(szTime), "%s%d:%s%d.%s%s%d",
-	(iMinutes < 10 ? "0" : ""), iMinutes,
-	(iSeconds < 10 ? "0" : ""), iSeconds,
-	(iMilliSeconds < 100 ? "0" : ""),
-	(iMilliSeconds < 10 ? "0" : ""), iMilliSeconds);
-	
-	return szTime;
+	return timeString;
 }
 
 public compareSeekerStats(Array:array, item1, item2)
 {
-	static eStats1[ePlayerStats], eStats2[ePlayerStats];
-	static szTrieKey[STEAMID_LEN];
+	static stats1[MixPlayerStats], stats2[MixPlayerStats];
+	static trieKey[STEAMID_LEN];
 	
-	ArrayGetString(array, item1, szTrieKey, charsmax(szTrieKey));
-	TrieGetArray(g_tStats, szTrieKey, eStats1, ePlayerStats);
+	ArrayGetString(array, item1, trieKey, charsmax(trieKey));
+	TrieGetArray(g_Stats, trieKey, stats1, MixPlayerStats);
 	
-	ArrayGetString(array, item2, szTrieKey, charsmax(szTrieKey));
-	TrieGetArray(g_tStats, szTrieKey, eStats2, ePlayerStats);
+	ArrayGetString(array, item2, trieKey, charsmax(trieKey));
+	TrieGetArray(g_Stats, trieKey, stats2, MixPlayerStats);
 	
-	new iKills1 = eStats1[Kills];
-	new iKills2 = eStats2[Kills];
+	new kills1 = stats1[Kills];
+	new kills2 = stats2[Kills];
 	
-	new iKA1 = iKills1 + eStats1[Assists];
-	new iKA2 = iKills2 + eStats2[Assists];
+	new killAssists1 = kills1 + stats1[Assists];
+	new killAssists2 = kills2 + stats2[Assists];
 	
-	if (iKA1 > iKA2)
+	if (killAssists1 > killAssists2)
 	{
 		return -1;
 	}
-	if (iKA1 < iKA2)
+	if (killAssists1 < killAssists2)
 	{
 		return 1;
 	}
 	
-	if (iKills1 > iKills2)
+	if (kills1 > kills2)
 	{
 		return -1;
 	}
-	if (iKills1 < iKills2)
+	if (kills1 < kills2)
 	{
 		return 1;
 	}
 	
-	new iRoundsPlayed1 = eStats1[CTRounds];
-	new iRoundsPlayed2 = eStats2[CTRounds];
+	new roundsPlayed1 = stats1[CTRounds];
+	new roundsPlayed2 = stats2[CTRounds];
 	
-	if (iRoundsPlayed1 > 0 && iRoundsPlayed2 == 0)
+	if (roundsPlayed1 > 0 && roundsPlayed2 == 0)
 	{
 		return -1;
 	}
-	if (iRoundsPlayed1 == 0 && iRoundsPlayed2 > 0)
+	if (roundsPlayed1 == 0 && roundsPlayed2 > 0)
 	{
 		return 1;
 	}
 	
-	if (iRoundsPlayed1 < iRoundsPlayed2)
+	if (roundsPlayed1 < roundsPlayed2)
 	{
 		return -1;
 	}
-	if (iRoundsPlayed1 > iRoundsPlayed2)
+	if (roundsPlayed1 > roundsPlayed2)
 	{
 		return 1;
 	}
@@ -562,45 +561,45 @@ public compareSeekerStats(Array:array, item1, item2)
 
 public compareHiderStats(Array:array, item1, item2)
 {
-	static eStats1[ePlayerStats], eStats2[ePlayerStats];
-	static szTrieKey[STEAMID_LEN];
+	static stats1[MixPlayerStats], stats2[MixPlayerStats];
+	static trieKey[STEAMID_LEN];
 	
-	ArrayGetString(array, item1, szTrieKey, charsmax(szTrieKey));
-	TrieGetArray(g_tStats, szTrieKey, eStats1, ePlayerStats);
+	ArrayGetString(array, item1, trieKey, charsmax(trieKey));
+	TrieGetArray(g_Stats, trieKey, stats1, MixPlayerStats);
 	
-	ArrayGetString(array, item2, szTrieKey, charsmax(szTrieKey));
-	TrieGetArray(g_tStats, szTrieKey, eStats2, ePlayerStats);
+	ArrayGetString(array, item2, trieKey, charsmax(trieKey));
+	TrieGetArray(g_Stats, trieKey, stats2, MixPlayerStats);
 
-	new Float:flSurvivalTime1 = eStats1[SurvTime];
-	new Float:flSurvivalTime2 = eStats2[SurvTime];
+	new Float:survivalTime1 = stats1[SurvTime];
+	new Float:survivalTime2 = stats2[SurvTime];
 	
-	if (flSurvivalTime1 > flSurvivalTime2)
+	if (survivalTime1 > survivalTime2)
 	{
 		return -1;
 	}
 	
-	if (flSurvivalTime1 < flSurvivalTime2)
+	if (survivalTime1 < survivalTime2)
 	{
 		return 1;
 	}
 	
-	new iRoundsPlayed1 = eStats1[TRounds];
-	new iRoundsPlayed2 = eStats2[TRounds];
+	new roundsPlayed1 = stats1[TRounds];
+	new roundsPlayed2 = stats2[TRounds];
 	
-	if (iRoundsPlayed1 > 0 && iRoundsPlayed2 == 0)
+	if (roundsPlayed1 > 0 && roundsPlayed2 == 0)
 	{
 		return -1;
 	}
-	if (iRoundsPlayed1 == 0 && iRoundsPlayed2 > 0)
+	if (roundsPlayed1 == 0 && roundsPlayed2 > 0)
 	{
 		return 1;
 	}
 	
-	if (iRoundsPlayed1 < iRoundsPlayed2)
+	if (roundsPlayed1 < roundsPlayed2)
 	{
 		return -1;
 	}
-	if (iRoundsPlayed1 > iRoundsPlayed2)
+	if (roundsPlayed1 > roundsPlayed2)
 	{
 		return 1;
 	}

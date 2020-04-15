@@ -31,7 +31,7 @@ new g_StatusTextMessageId;
 new g_StatusValueMessageId;
 
 // Forwards
-new g_iHnsStateChangedForward;
+new g_HnsStateChangedForward;
 
 // Players states
 new CsTeams:g_Team[MAX_PLAYERS + 1];
@@ -150,8 +150,6 @@ public plugin_init()
 	RegisterHam(Ham_Weapon_PrimaryAttack, g_WeaponKnife, "fwdHamKnifeSlash");
 	RegisterHam(Ham_Item_Deploy, g_WeaponKnife, "fwdHamDeployKnife", 1);
 	
-	g_iHnsStateChangedForward = CreateMultiForward("HNS_StateChanged", ET_IGNORE, FP_CELL);
-	
 	register_forward(FM_EmitSound, "fwdEmitSound", 0);
 	register_forward(FM_GetGameDescription, "fwdGetGameDescription", 0);
 	register_forward(FM_ClientKill, "fwdClientKill", 0);
@@ -185,9 +183,11 @@ public plugin_init()
 	TrieSetString(g_RoundEndMessageLookup, "#Terrorists_Win", hidersWinMessage);
 	TrieSetString(g_RoundEndMessageLookup, "#CTs_Win", "Seekers Win");
 
-	if (g_iHnsStateChangedForward < 0)
+	g_HnsStateChangedForward = CreateMultiForward("HNS_StateChanged", ET_IGNORE, FP_CELL);
+
+	if (g_HnsStateChangedForward < 0)
 	{
-		g_iHnsStateChangedForward = 0;
+		g_HnsStateChangedForward = 0;
 		log_amx("State change forward could not be created.");
 	}
 }
@@ -197,8 +197,8 @@ public plugin_end()
 	g_PluginState = HnsState_Public;
 	setFreezeTime(0);
 	
-	DestroyForward(g_iHnsStateChangedForward);
-	g_iHnsStateChangedForward = 0;
+	DestroyForward(g_HnsStateChangedForward);
+	g_HnsStateChangedForward = 0;
 }
 
 public client_disconnected(id)
@@ -894,7 +894,7 @@ public nativeChangeState(const plugin, const params)
 	
 	g_PluginState = newState;
 	
-	if (!ExecuteForward(g_iHnsStateChangedForward, _, newState))
+	if (!ExecuteForward(g_HnsStateChangedForward, _, newState))
 	{
 		log_amx("Could not execute state change forward");
 	}
