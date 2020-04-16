@@ -33,7 +33,7 @@ public plugin_init()
 
 	g_DisconnectedReplaceCooldownLookup = TrieCreate();
 
-	g_MixParticipationChangedForward = CreateMultiForward("HNS_Mix_ParticipationChanged", ET_IGNORE, FP_CELL);
+	g_MixParticipationChangedForward = CreateMultiForward("HNS_Mix_ParticipationChanged", ET_IGNORE, FP_CELL, FP_CELL);
 	
 	if (g_MixParticipationChangedForward < 0)
 	{
@@ -93,10 +93,12 @@ public cmdNoPlay(const id)
 	if (g_MixState == MixState_Inactive)
 	{
 		client_print_color(id, print_team_red, "^3Command is only available during mix");
-		return PLUGIN_CONTINUE;
+	}
+	else
+	{
+		changeOptOutStatus(id, true);
 	}
 	
-	changeOptOutStatus(id, true);
 	return PLUGIN_HANDLED;
 }
 
@@ -105,10 +107,12 @@ public cmdPlay(const id)
 	if (g_MixState == MixState_Inactive)
 	{
 		client_print_color(id, print_team_red, "^3Command is only available during mix");
-		return PLUGIN_CONTINUE;
+	}
+	else
+	{
+		changeOptOutStatus(id, false);
 	}
 	
-	changeOptOutStatus(id, false);
 	return PLUGIN_HANDLED;
 }
 
@@ -128,7 +132,7 @@ changeOptOutStatus(const id, bool:optOut)
 
 	g_OptOutOfMixParticipation[id] = optOut;
 
-	if (!ExecuteForward(g_MixParticipationChangedForward, _, optOut))
+	if (!ExecuteForward(g_MixParticipationChangedForward, _, id, optOut))
 	{
 		log_amx("Could not execute mix participation changed forward");
 	}
@@ -148,15 +152,13 @@ changeOptOutStatus(const id, bool:optOut)
 
 public cmdReplace(const id)
 {
+	new Float:gametime = get_gametime();
+	
 	if (g_MixState == MixState_Inactive)
 	{
 		client_print_color(id, print_team_red, "^3Command is only available during mix");
-		return PLUGIN_HANDLED;
 	}
-	
-	new Float:gametime = get_gametime();
-	
-	if (cs_get_user_team(id) == CS_TEAM_SPECTATOR)
+	else if (cs_get_user_team(id) == CS_TEAM_SPECTATOR)
 	{
 		client_print_color(id, print_team_red, "^3You can not execute this command as a spectator");
 	}
